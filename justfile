@@ -42,7 +42,24 @@ test-python:
     @for directory in tests/*; do PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$directory" -p 'test_*.py'; done
 
 test-bazel:
-    @output_root="$(mktemp -d)"; cleanup() { chmod -R u+w "$output_root" 2>/dev/null || true; rm -rf -- "$output_root"; }; trap cleanup EXIT; if command -v bazelisk >/dev/null 2>&1; then bazel_bin="$(command -v bazelisk)"; else bazel_bin="$(command -v bazel)"; fi; USE_BAZEL_VERSION=9.2.0 "$bazel_bin" --batch --output_user_root="$output_root/user" test //... --lockfile_mode=off --test_output=errors --symlink_prefix="$output_root/symlink-"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$(uname -s)" == Darwin ]]; then
+      # Bazel owns its compiler/action environment. Do not leak Nix's Darwin
+      # linker flags into rules_go's separately declared C toolchain.
+      unset NIX_BINTOOLS NIX_CC NIX_CFLAGS_COMPILE NIX_CFLAGS_LINK NIX_LDFLAGS
+      export CC=/usr/bin/clang
+      export CXX=/usr/bin/clang++
+    fi
+    output_root="$(mktemp -d)"
+    cleanup() { chmod -R u+w "$output_root" 2>/dev/null || true; rm -rf -- "$output_root"; }
+    trap cleanup EXIT
+    if command -v bazelisk >/dev/null 2>&1; then
+      bazel_bin="$(command -v bazelisk)"
+    else
+      bazel_bin="$(command -v bazel)"
+    fi
+    USE_BAZEL_VERSION=9.2.0 "$bazel_bin" --batch --output_user_root="$output_root/user" test //... --lockfile_mode=off --test_output=errors --symlink_prefix="$output_root/symlink-"
 
 validate: fmt-check validate-catalog validate-policy validate-tofu lint-ci
 

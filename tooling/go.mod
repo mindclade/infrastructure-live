@@ -1,8 +1,6 @@
 module github.com/mindclade/infrastructure-live/tooling
 
-go 1.26.0
-
-toolchain go1.26.7
+go 1.26.7
 
 require (
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
