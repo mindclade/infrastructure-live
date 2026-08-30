@@ -183,7 +183,7 @@
             test "${pkgs.google-cloud-sdk.version}" = "581.0.0"
             grep -Fq 'go_sdk.download(version = "1.26.7")' ${self}/MODULE.bazel
             grep -Fq 'python_version = "3.14.7"' ${self}/MODULE.bazel
-            grep -Fq 'toolchain go1.26.7' ${self}/tooling/go.mod
+            grep -Fq 'go 1.26.7' ${self}/tooling/go.mod
             mkdir -p "$out"
             printf '%s\n' '${nixpkgs.rev}' > "$out/nixpkgs-revision"
           '';

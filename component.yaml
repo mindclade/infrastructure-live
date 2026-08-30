@@ -15,7 +15,7 @@ spec:
   repository_class: infrastructure-source
   trust_tier: privileged
   recovery_tier: tier-0
-  data_classification: confidential
+  data_classification: public
   production_authority: false
   dependencies:
     - component:bootstrap
