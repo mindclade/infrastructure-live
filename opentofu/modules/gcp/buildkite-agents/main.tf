@@ -3,6 +3,16 @@ locals {
   token_secret_resource_b64 = var.enabled ? base64encode(
     "projects/${var.project_id}/secrets/${var.token_secret_id}/versions/${var.token_secret_version}"
   ) : ""
+  dependency_mirror_manifest = {
+    apiVersion        = "ci.mindclade.dev/v1"
+    kind              = "DependencyMirrorManifest"
+    coldCacheRequired = true
+    endpoints         = var.dependency_mirror_endpoints
+  }
+  dependency_mirror_manifest_b64 = var.enabled ? base64encode(jsonencode(local.dependency_mirror_manifest)) : ""
+  dependency_mirror_manifest_digest = var.enabled ? "sha256:${sha256(jsonencode(
+    local.dependency_mirror_manifest
+  ))}" : ""
 }
 
 resource "google_service_account" "agent" {
@@ -46,6 +56,7 @@ resource "google_compute_instance_template" "agent" {
   name_prefix  = "${var.name}-"
   machine_type = var.machine_type
   labels       = var.labels
+  tags         = [var.network_tag]
 
   disk {
     source_image = var.boot_image
@@ -95,7 +106,6 @@ resource "google_compute_instance_template" "agent" {
       printf '%s' "$${access_token}" | docker login --username oauth2accesstoken --password-stdin "$${registry}" >/dev/null
       unset access_token token_json
 
-      install -d -m 0700 /var/lib/buildkite-agent
       docker pull "$${image}"
       docker run --name buildkite-agent --rm \
         --read-only \
@@ -103,10 +113,13 @@ resource "google_compute_instance_template" "agent" {
         --security-opt=no-new-privileges:true \
         --pids-limit=512 \
         --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
-        --volume /var/lib/buildkite-agent:/workspace \
+        --tmpfs /workspace:rw,nosuid,nodev,size=${var.workspace_tmpfs_mb}m \
         --env BUILDKITE_BUILD_PATH=/workspace \
         --env BUILDKITE_AGENT_DISCONNECT_AFTER_JOB=true \
         --env BUILDKITE_AGENT_DISCONNECT_AFTER_IDLE_TIMEOUT=300 \
+        --env MINDCLADE_COLD_CACHE_REQUIRED=true \
+        --env "MINDCLADE_DEPENDENCY_MIRROR_MANIFEST_B64=${local.dependency_mirror_manifest_b64}" \
+        --env "MINDCLADE_DEPENDENCY_MIRROR_MANIFEST_DIGEST=${local.dependency_mirror_manifest_digest}" \
         --env "BUILDKITE_TOKEN_SECRET_RESOURCE=$${secret_resource}" \
         "$${image}"
     EOT
@@ -135,6 +148,10 @@ resource "google_compute_instance_template" "agent" {
     precondition {
       condition     = var.agent_job_isolation_contract_verified
       error_message = "The exact agent image and execution design must be qualified for JAT-only one-job isolation without workload access to metadata or agent credentials."
+    }
+    precondition {
+      condition     = var.dependency_mirror_contract_verified
+      error_message = "The exact agent image must be qualified to route every declared dependency authority and cache through the closed mirror manifest during a cold-cache build."
     }
   }
 }

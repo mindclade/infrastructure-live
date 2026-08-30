@@ -57,6 +57,18 @@ retention is enforced at that class's minimum. Restricted bucket activation and
 every irreversible retention-lock transition are intentionally unreachable:
 operator-authored catalog fields or receipts cannot prove independent approval.
 A future activation must first add a separately rooted cryptographic verifier.
+
+CI execution additionally uses a dedicated network target tag whose firewall-only
+boundary is complete before an agent template can activate. Four named allows are
+mandatory (`buildkite-control-plane`, `source-control`, `google-apis`, and
+`dependency-mirror`), with those allows at higher precedence than the
+workload-scoped default deny for all other egress. The agent container accepts exactly one job, uses an empty
+tmpfs workspace, disconnects, and powers off. Its canonical mirror manifest
+covers Bazel registry/cache, Buf, Go, Nix, npm, OCI, Python, and Rust routes and
+contains only credential-free HTTPS endpoints. All mirror URLs, destination
+CIDRs, private-network references, immutable images, and contract-verification
+flags remain null, empty, or false in source, so cold-cache and egress readiness
+require a reviewed connected plan and independent qualification.
 Centralized logs require delegated CMEK and at
 least 30 days retention in development, 90 in staging/production, and 365 in
 restricted.

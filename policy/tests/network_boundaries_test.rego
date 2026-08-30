@@ -151,6 +151,59 @@ test_accepts_provider_shaped_private_sql_and_default_deny if {
 	count(violations) == 0
 }
 
+test_accepts_workload_scoped_ci_default_deny if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "module.stack.module.execution_egress.google_compute_firewall.deny_egress[0]",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"priority": 1000,
+				"destination_ranges": ["0.0.0.0/0"],
+				"target_tags": ["buildkite-agents-development-ephemeral"],
+				"deny": [{"protocol": "all"}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 0
+}
+
+test_rejects_ci_default_deny_priority_without_target_scope if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.unscoped_ci_deny",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"priority": 1000,
+				"destination_ranges": ["0.0.0.0/0"],
+				"deny": [{"protocol": "all"}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_rejects_unapproved_scoped_default_deny_priority if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.unapproved_scoped_deny",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"priority": 999,
+				"destination_ranges": ["0.0.0.0/0"],
+				"target_tags": ["buildkite-agents-development-ephemeral"],
+				"deny": [{"protocol": "all"}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
 test_rejects_equivalent_prefix_zero_egress if {
 	violations := deny with input as {
 		"resource_changes": [{

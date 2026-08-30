@@ -96,12 +96,25 @@ reviewed_transport(after) if {
 }
 
 default_deny(after) if {
-	object.get(after, "priority", 0) == 65534
+	approved_default_deny_priority(after)
 	object.get(after, "destination_ranges", []) == ["0.0.0.0/0"]
 	deny_rules := object.get(after, "deny", [])
 	count(deny_rules) == 1
 	object.get(deny_rules[0], "protocol", "") == "all"
 	count(object.get(after, "log_config", [])) == 1
+}
+
+approved_default_deny_priority(after) if {
+	object.get(after, "priority", 0) == 65534
+}
+
+approved_default_deny_priority(after) if {
+	object.get(after, "priority", 0) == 1000
+	target_tags := object.get(after, "target_tags", [])
+	count(target_tags) > 0
+	every tag in target_tags {
+		regex.match("^[a-z][a-z0-9-]{0,61}[a-z0-9]$", tag)
+	}
 }
 
 default_route_covered(ranges) if {

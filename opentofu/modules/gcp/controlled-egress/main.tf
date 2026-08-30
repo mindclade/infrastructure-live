@@ -1,5 +1,5 @@
 resource "google_compute_router" "this" {
-  count = var.enabled ? 1 : 0
+  count = var.enabled && var.manage_nat ? 1 : 0
 
   project = var.project_id
   name    = "${var.name}-router"
@@ -8,7 +8,7 @@ resource "google_compute_router" "this" {
 }
 
 resource "google_compute_address" "nat" {
-  count = var.enabled ? var.nat_ip_count : 0
+  count = var.enabled && var.manage_nat ? var.nat_ip_count : 0
 
   project      = var.project_id
   name         = "${var.name}-nat-${count.index}"
@@ -27,8 +27,9 @@ resource "google_compute_firewall" "allow_egress" {
   name               = "${var.name}-allow-${each.key}"
   network            = var.network_id
   direction          = "EGRESS"
-  priority           = 1000
+  priority           = var.allow_priority
   destination_ranges = sort(each.value.destination_cidrs)
+  target_tags        = sort(var.target_tags)
 
   allow {
     protocol = each.value.protocol
@@ -45,15 +46,31 @@ resource "google_compute_firewall" "deny_egress" {
   name               = "${var.name}-deny-unreviewed-egress"
   network            = var.network_id
   direction          = "EGRESS"
-  priority           = 65534
+  priority           = var.deny_priority
   destination_ranges = ["0.0.0.0/0"]
+  target_tags        = sort(var.target_tags)
 
   deny { protocol = "all" }
   log_config { metadata = "INCLUDE_ALL_METADATA" }
+
+  lifecycle {
+    precondition {
+      condition     = var.allow_priority < var.deny_priority
+      error_message = "The explicit allowlist must have higher precedence than the default-deny rule."
+    }
+    precondition {
+      condition     = !var.require_target_scope || length(var.target_tags) > 0
+      error_message = "This egress boundary requires at least one explicit target tag."
+    }
+    precondition {
+      condition     = length(setsubtract(var.required_rule_names, toset(keys(var.allowed_egress_rules)))) == 0
+      error_message = "The egress allowlist omits one or more capability-required named rules."
+    }
+  }
 }
 
 resource "google_compute_router_nat" "this" {
-  count = var.enabled ? 1 : 0
+  count = var.enabled && var.manage_nat ? 1 : 0
 
   project                             = var.project_id
   name                                = "${var.name}-nat"

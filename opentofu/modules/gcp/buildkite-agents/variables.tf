@@ -17,6 +17,16 @@ variable "subnetwork_id" {
   default  = null
   nullable = true
 }
+variable "network_tag" {
+  description = "Dedicated network target tag shared only with the CI egress allowlist and default-deny rules."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = !var.enabled || (var.network_tag != null && can(regex("^[a-z][a-z0-9-]{0,61}[a-z0-9]$", var.network_tag)))
+    error_message = "An enabled agent pool requires one canonical dedicated network target tag."
+  }
+}
 variable "name" {
   type    = string
   default = "buildkite-agents"
@@ -75,6 +85,42 @@ variable "agent_job_isolation_contract_verified" {
   description = "External qualification that jobs cannot access agent credentials, metadata, or the long-lived registration token and that JAT-only one-job isolation is enforced."
   type        = bool
   default     = false
+}
+variable "dependency_mirror_endpoints" {
+  description = "Closed, credential-free HTTPS mirror routes inherited by every cold-cache build."
+  type = object({
+    bazel_registry_url     = optional(string)
+    bazel_remote_cache_url = optional(string)
+    buf_registry_url       = optional(string)
+    go_proxy_url           = optional(string)
+    nix_substituter_url    = optional(string)
+    npm_registry_url       = optional(string)
+    oci_registry_url       = optional(string)
+    python_index_url       = optional(string)
+    rust_sparse_index_url  = optional(string)
+  })
+  default = {}
+  validation {
+    condition = !var.enabled || alltrue([
+      for endpoint in values(var.dependency_mirror_endpoints) :
+      endpoint != null && can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[1-9][0-9]{0,4})?(/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)?$", endpoint))
+    ])
+    error_message = "Every Bazel, Buf, Go, Nix, npm, OCI, Python, and Rust dependency/cache route must be a credential-free HTTPS endpoint when enabled."
+  }
+}
+variable "dependency_mirror_contract_verified" {
+  description = "External qualification that the exact image consumes only the declared mirror routes and succeeds from an empty workspace/cache."
+  type        = bool
+  default     = false
+}
+variable "workspace_tmpfs_mb" {
+  description = "Per-container workspace size; tmpfs guarantees that no job or dependency cache survives agent exit or VM restart."
+  type        = number
+  default     = 8192
+  validation {
+    condition     = floor(var.workspace_tmpfs_mb) == var.workspace_tmpfs_mb && var.workspace_tmpfs_mb >= 4096 && var.workspace_tmpfs_mb <= 32768
+    error_message = "workspace_tmpfs_mb must be an integer between 4096 and 32768."
+  }
 }
 variable "min_replicas" {
   type    = number

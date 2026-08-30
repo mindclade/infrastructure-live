@@ -33,12 +33,17 @@ variable "name" {
   type    = string
   default = "controlled-egress"
 }
+variable "manage_nat" {
+  description = "Whether this boundary also owns Cloud NAT; capability-scoped firewalls can reuse the network stack's NAT."
+  type        = bool
+  default     = true
+}
 variable "subnetwork_ids" {
   type    = set(string)
   default = []
   validation {
-    condition     = !var.enabled || length(var.subnetwork_ids) > 0
-    error_message = "At least one explicit subnetwork is required when enabled."
+    condition     = !var.enabled || !var.manage_nat || length(var.subnetwork_ids) > 0
+    error_message = "At least one explicit subnetwork is required when NAT management is enabled."
   }
 }
 variable "nat_ip_count" {
@@ -95,6 +100,45 @@ variable "allowed_egress_rules" {
       ]))
     )
     error_message = "Enabled egress requires named TCP/UDP rules with canonical IPv4 CIDRs whose union is not a default route and bounded ports."
+  }
+}
+variable "required_rule_names" {
+  description = "Capability-owned allowlist entries that must exist before the boundary can activate."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for name in var.required_rule_names : can(regex("^[a-z][a-z0-9-]{2,40}$", name))])
+    error_message = "Required egress rule names must use the same canonical form as allowlist entries."
+  }
+}
+variable "target_tags" {
+  description = "Optional workload tags that scope both allow and deny rules; an empty set retains network-wide behavior."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for tag in var.target_tags : can(regex("^[a-z][a-z0-9-]{0,61}[a-z0-9]$", tag))])
+    error_message = "Egress target tags must be canonical Compute Engine network tags."
+  }
+}
+variable "require_target_scope" {
+  description = "Fail closed if the boundary would apply network-wide instead of to an explicit workload tag."
+  type        = bool
+  default     = false
+}
+variable "allow_priority" {
+  type    = number
+  default = 1000
+  validation {
+    condition     = floor(var.allow_priority) == var.allow_priority && var.allow_priority >= 0 && var.allow_priority <= 65533
+    error_message = "allow_priority must be an integer from zero through 65533."
+  }
+}
+variable "deny_priority" {
+  type    = number
+  default = 65534
+  validation {
+    condition     = floor(var.deny_priority) == var.deny_priority && var.deny_priority >= 1 && var.deny_priority <= 65534
+    error_message = "deny_priority must be an integer from one through 65534."
   }
 }
 variable "labels" {
