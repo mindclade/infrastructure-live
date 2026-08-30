@@ -134,6 +134,17 @@ canonical SPKI digest, and a detached HSM ECDSA P-256 signature that verifies ov
 canonical metadata, resources, provenance, plan digest, and source commit. It
 writes atomically with owner-only permissions.
 
+For every environment, connected governance must publish the exact
+`INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_<ENVIRONMENT>`,
+`INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_<ENVIRONMENT>`, and
+`INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_<ENVIRONMENT>` variables. The version
+must name bootstrap's `us-central1/bootstrap-signing/infrastructure-export`
+cryptoKeyVersion; the digest is SHA-256 over canonical SPKI DER, independent of
+PEM formatting. The corresponding environment apply service account must have
+only key-version-scoped signing/public-key access through its exact apply WIF
+source and audience. Until bootstrap enables that IAM and all three values are
+qualified, protected apply fails before any OpenTofu mutation.
+
 The export is the only supported infrastructure-to-GitOps interface. It
 contains resource URIs, never secret values or OpenTofu state. The embedded
 public key proves cryptographic consistency; GitOps must additionally bind its

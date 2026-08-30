@@ -163,7 +163,7 @@ func writeExport(args []string, signed bool) error {
 	if *resourcesPath == "" || *output == "" {
 		return fmt.Errorf("--resources and --output are required")
 	}
-	data, err := os.ReadFile(*resourcesPath)
+	data, err := readBoundedInput(*resourcesPath, 8*1024*1024)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func writeExport(args []string, signed bool) error {
 	if *signaturePath == "" || *trustedKeyVersion == "" || *trustedPublicKeyDigest == "" {
 		return fmt.Errorf("--signature, --trusted-key-version, and --trusted-public-key-digest are required for exports emit")
 	}
-	signatureData, err := os.ReadFile(*signaturePath)
+	signatureData, err := readBoundedInput(*signaturePath, 16*1024)
 	if err != nil {
 		return err
 	}
@@ -280,6 +280,10 @@ func readBoundedInput(path string, maximum int64) ([]byte, error) {
 			return nil, err
 		}
 		defer file.Close()
+		openedInfo, err := file.Stat()
+		if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) || openedInfo.Size() > maximum {
+			return nil, fmt.Errorf("input %s changed identity or exceeded its bound while opening", path)
+		}
 		reader = file
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
