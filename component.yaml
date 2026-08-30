@@ -1,0 +1,31 @@
+apiVersion: mindclade.io/v1alpha1
+kind: Component
+metadata:
+  name: infrastructure-live
+  description: Environment-specific Google Cloud composition, reviewed plans, and infrastructure state references.
+  annotations:
+    github.com/project-slug: mindclade/infrastructure-live
+spec:
+  type: infrastructure-control-plane
+  lifecycle: production
+  maturity: production
+  owner: infrastructure
+  repository_class: infrastructure-source
+  data_classification: confidential
+  production_authority: true
+  dependencies:
+    - component:bootstrap
+  provides:
+    - infrastructure-catalog-v1
+    - infrastructure-export-v1
+    - infrastructure-plan-evidence-v1
+  consumers:
+    - component:gitops
+  release:
+    strategy: reviewed-main
+    artifact: source-commit
+    immutable: true
+    evidence:
+      - reviewed-plan-digest
+      - policy-verification
+      - apply-receipt

@@ -1,0 +1,24 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: RegionCatalog
+regions:
+  - name: central-us
+    enabled: false
+    primaryLocation: null
+    recoveryLocation: null
+    residency: us
+    regionalControlPlanes: true
+    privateGoogleAccessRequired: true
+  - name: central-us-with-east-recovery
+    enabled: false
+    primaryLocation: null
+    recoveryLocation: null
+    residency: us
+    regionalControlPlanes: true
+    privateGoogleAccessRequired: true
+  - name: central-us-restricted
+    enabled: false
+    primaryLocation: null
+    recoveryLocation: null
+    residency: us
+    regionalControlPlanes: true
+    privateGoogleAccessRequired: true

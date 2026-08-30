@@ -1,0 +1,300 @@
+name: protected-apply
+
+"on":
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Exact catalog environment
+        required: true
+        type: choice
+        options: [development, staging, production, restricted]
+      stack:
+        description: Exact isolated state stack
+        required: true
+        type: choice
+        options: [foundation, network, artifacts, data-services, clusters, ci-execution, observability]
+      source_commit:
+        description: Full main commit approved for apply
+        required: true
+        type: string
+      plan_digest:
+        description: Canonical plan digest emitted by infractl for the reviewed plan
+        required: true
+        type: string
+      change_reference:
+        description: Approved internal change reference
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-apply-${{ inputs.environment }}-${{ inputs.stack }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26.6"
+  GO_LINUX_AMD64_SHA256: 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+  TOFU_VERSION: "1.12.2"
+  TOFU_LINUX_AMD64_SHA256: dc0ad16a42b3bfb5f3ceff3dcd5e9cd4c55271fae9f4bfe611749ff8ae6ec23c
+
+jobs:
+  preflight:
+    name: source-and-authority-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CONNECTED_READY: ${{ vars.INFRASTRUCTURE_CONNECTED_READY }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      PLAN_DIGEST: ${{ inputs.plan_digest }}
+      CHANGE_REFERENCE: ${{ inputs.change_reference }}
+    steps:
+      - name: Deny incomplete or mismatched authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${CONNECTED_READY}" = "true"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          test "${SOURCE_COMMIT}" = "${GITHUB_SHA}"
+          [[ "${PLAN_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${CHANGE_REFERENCE}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$ ]]
+
+  apply:
+    name: reviewed-saved-plan
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: infrastructure-${{ inputs.environment }}-apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      STACK: ${{ inputs.stack }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      REVIEWED_PLAN_DIGEST: ${{ inputs.plan_digest }}
+      CHANGE_REFERENCE: ${{ inputs.change_reference }}
+      STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
+      STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
+      PLAN_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_PLAN }}
+      PLAN_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_PLAN }}
+      APPLY_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_APPLY }}
+      APPLY_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_APPLY }}
+      FINOPS_BUDGET_READY: ${{ vars.INFRASTRUCTURE_FINOPS_BUDGET_READY }}
+      SHARED_VPC_GKE_IAM_READY: ${{ vars.INFRASTRUCTURE_SHARED_VPC_GKE_IAM_READY }}
+      BUILDKITE_IMAGE_CONTRACT_READY: ${{ vars.INFRASTRUCTURE_BUILDKITE_IMAGE_CONTRACT_READY }}
+      CMEK_SERVICE_AGENT_BINDINGS_READY: ${{ vars.INFRASTRUCTURE_CMEK_SERVICE_AGENT_BINDINGS_READY }}
+      BINARY_AUTHORIZATION_READY: ${{ vars.INFRASTRUCTURE_BINARY_AUTHORIZATION_READY }}
+      IAM_PRINCIPALS_READY: ${{ vars.INFRASTRUCTURE_IAM_PRINCIPALS_READY }}
+      RESOURCE_REFERENCES_READY: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_READY }}
+      BUILDKITE_JOB_ISOLATION_READY: ${{ vars.INFRASTRUCTURE_BUILDKITE_JOB_ISOLATION_READY }}
+      IAM_PRINCIPALS_DIGEST: ${{ vars.INFRASTRUCTURE_IAM_PRINCIPALS_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_FOUNDATION: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_FOUNDATION_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_NETWORK: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_NETWORK_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_ARTIFACTS: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_ARTIFACTS_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_DATA_SERVICES: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_DATA_SERVICES_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_CLUSTERS: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_CLUSTERS_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_CI_EXECUTION: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_CI_EXECUTION_DIGEST }}
+      RESOURCE_REFERENCES_DIGEST_OBSERVABILITY: ${{ vars.INFRASTRUCTURE_RESOURCE_REFERENCES_OBSERVABILITY_DIGEST }}
+      APIS_READY_FOUNDATION: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_FOUNDATION_READY }}
+      APIS_READY_NETWORK: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_NETWORK_READY }}
+      APIS_READY_ARTIFACTS: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_ARTIFACTS_READY }}
+      APIS_READY_DATA_SERVICES: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_DATA_SERVICES_READY }}
+      APIS_READY_CLUSTERS: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_CLUSTERS_READY }}
+      APIS_READY_CI_EXECUTION: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_CI_EXECUTION_READY }}
+      APIS_READY_OBSERVABILITY: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_OBSERVABILITY_READY }}
+    steps:
+      - name: Require environment-scoped state and identity bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STATE_BUCKET}"
+          test -n "${STATE_PREFIX}"
+          test -n "${PLAN_WIF_PROVIDER}"
+          test -n "${PLAN_SERVICE_ACCOUNT}"
+          test -n "${APPLY_WIF_PROVIDER}"
+          test -n "${APPLY_SERVICE_ACCOUNT}"
+          test "${PLAN_SERVICE_ACCOUNT}" != "${APPLY_SERVICE_ACCOUNT}"
+          test "${FINOPS_BUDGET_READY}" = "true"
+          test "${SHARED_VPC_GKE_IAM_READY}" = "true"
+          test "${BUILDKITE_IMAGE_CONTRACT_READY}" = "true"
+          test "${CMEK_SERVICE_AGENT_BINDINGS_READY}" = "true"
+          test "${BINARY_AUTHORIZATION_READY}" = "true"
+          test "${IAM_PRINCIPALS_READY}" = "true"
+          test "${RESOURCE_REFERENCES_READY}" = "true"
+          [[ "${IAM_PRINCIPALS_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          case "${STACK}" in
+            foundation) test "${APIS_READY_FOUNDATION}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_FOUNDATION}" ;;
+            network) test "${APIS_READY_NETWORK}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_NETWORK}" ;;
+            artifacts) test "${APIS_READY_ARTIFACTS}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_ARTIFACTS}" ;;
+            data-services) test "${APIS_READY_DATA_SERVICES}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_DATA_SERVICES}" ;;
+            clusters) test "${APIS_READY_CLUSTERS}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_CLUSTERS}" ;;
+            ci-execution) test "${APIS_READY_CI_EXECUTION}" = "true"; test "${BUILDKITE_JOB_ISOLATION_READY}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_CI_EXECUTION}" ;;
+            observability) test "${APIS_READY_OBSERVABILITY}" = "true"; selected_digest="${RESOURCE_REFERENCES_DIGEST_OBSERVABILITY}" ;;
+            *) exit 1 ;;
+          esac
+          [[ "${selected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'EXPECTED_RESOURCE_REFERENCES_DIGEST=%s\n' "${selected_digest}" >>"${GITHUB_ENV}"
+
+      - name: Check out the approved commit without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install checksum-verified Go
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/go.tar.gz"
+          toolchains="${RUNNER_TEMP}/toolchains"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${archive}"
+          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${toolchains}"
+          tar -xzf "${archive}" -C "${toolchains}"
+          printf '%s\n' "${toolchains}/go/bin" >>"${GITHUB_PATH}"
+
+      - name: Install checksum-verified OpenTofu
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/tofu.zip"
+          bin_dir="${RUNNER_TEMP}/tofu-bin"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
+            --output "${archive}"
+          printf '%s  %s\n' "${TOFU_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${bin_dir}"
+          unzip -q "${archive}" -d "${bin_dir}"
+          chmod 0755 "${bin_dir}/tofu"
+          printf '%s\n' "${bin_dir}" >>"${GITHUB_PATH}"
+
+      - name: Install pinned policy verifier
+        run: |
+          set -euo pipefail
+          go install github.com/open-policy-agent/conftest@v0.69.0
+          printf '%s\n' "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
+
+      - name: Build the redacting classifier
+        run: |
+          set -euo pipefail
+          umask 077
+          cd tooling
+          go build -trimpath -o "${RUNNER_TEMP}/infractl" ./cmd/infractl
+
+      - name: Revalidate catalog authority and live-root activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/infractl" catalog validate --root .
+
+      - name: Authenticate the read-only plan identity
+        id: plan-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.PLAN_WIF_PROVIDER }}
+          service_account: ${{ env.PLAN_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Recreate and verify the reviewed saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
+          tofu -chdir="${root}" init -input=false \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}"
+          set +e
+          tofu -chdir="${root}" plan -input=false -lock-timeout=5m -detailed-exitcode \
+            -out="${RUNNER_TEMP}/reviewed.tfplan"
+          plan_status="$?"
+          set -e
+          test "${plan_status}" -eq 2
+          tofu -chdir="${root}" show -json "${RUNNER_TEMP}/reviewed.tfplan" >"${RUNNER_TEMP}/reviewed.plan.json"
+          actual_iam_digest="sha256:$(
+            jq -cS --arg environment "${ENVIRONMENT}" \
+              '{environment: $environment, approvedIamPrincipals: (.variables.approved_iam_principals.value | sort)}' \
+              "${RUNNER_TEMP}/reviewed.plan.json" | tr -d '\n' | sha256sum | awk '{print $1}'
+          )"
+          test "${actual_iam_digest}" = "${IAM_PRINCIPALS_DIGEST}"
+          actual_resource_digest="sha256:$(
+            jq -cS --arg environment "${ENVIRONMENT}" --arg stack "${STACK}" \
+              '{environment: $environment, stack: $stack, approvedResourceReferences: (.variables.approved_resource_references.value | sort)}' \
+              "${RUNNER_TEMP}/reviewed.plan.json" | tr -d '\n' | sha256sum | awk '{print $1}'
+          )"
+          test "${actual_resource_digest}" = "${EXPECTED_RESOURCE_REFERENCES_DIGEST}"
+          "${RUNNER_TEMP}/infractl" plan classify \
+            --input "${RUNNER_TEMP}/reviewed.plan.json" >"${RUNNER_TEMP}/classification.json"
+          actual_digest="$(jq -er '.digest' "${RUNNER_TEMP}/classification.json")"
+          test "${actual_digest}" = "${REVIEWED_PLAN_DIGEST}"
+          conftest test "${RUNNER_TEMP}/reviewed.plan.json" \
+            --policy policy --all-namespaces --output json >"${RUNNER_TEMP}/policy.json"
+          rm -f "${RUNNER_TEMP}/reviewed.plan.json"
+
+      - name: Authenticate the distinct apply identity
+        id: apply-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.APPLY_WIF_PROVIDER }}
+          service_account: ${{ env.APPLY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Apply only the verified saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
+          tofu -chdir="${root}" apply -input=false -auto-approve "${RUNNER_TEMP}/reviewed.tfplan"
+
+      - name: Require post-apply zero drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
+          tofu -chdir="${root}" plan -input=false -lock-timeout=5m -detailed-exitcode
+
+      - name: Create a redacted apply receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          classification_digest="sha256:$(sha256sum "${RUNNER_TEMP}/classification.json" | awk '{print $1}')"
+          policy_digest="sha256:$(sha256sum "${RUNNER_TEMP}/policy.json" | awk '{print $1}')"
+          jq -n \
+            --arg apiVersion "infrastructure.mindclade.dev/apply-receipt/v1" \
+            --arg environment "${ENVIRONMENT}" \
+            --arg stack "${STACK}" \
+            --arg sourceCommit "${SOURCE_COMMIT}" \
+            --arg planDigest "${REVIEWED_PLAN_DIGEST}" \
+            --arg iamPrincipalsDigest "${IAM_PRINCIPALS_DIGEST}" \
+            --arg resourceReferencesDigest "${EXPECTED_RESOURCE_REFERENCES_DIGEST}" \
+            --arg classificationDigest "${classification_digest}" \
+            --arg policyDigest "${policy_digest}" \
+            --arg changeReference "${CHANGE_REFERENCE}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg appliedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, appliedAt: $appliedAt}' \
+            >"${RUNNER_TEMP}/apply.receipt.json"
+          rm -f "${RUNNER_TEMP}/reviewed.tfplan" "${RUNNER_TEMP}/classification.json" "${RUNNER_TEMP}/policy.json"
+
+      - name: Retain the redacted receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: apply-receipt-${{ inputs.environment }}-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/apply.receipt.json
+          if-no-files-found: error
+          retention-days: 90

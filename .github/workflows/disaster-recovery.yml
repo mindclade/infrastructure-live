@@ -1,0 +1,119 @@
+name: disaster-recovery
+
+"on":
+  schedule:
+    - cron: "41 9 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Source recovery contract to verify without mutation
+        required: true
+        default: all
+        type: choice
+        options: [all, database, artifacts, network, cluster, regional]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: disaster-recovery-verification
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26.6"
+  GO_LINUX_AMD64_SHA256: 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+  PYTHON_VERSION: "3.14.7"
+  PYTHON_STANDALONE_RELEASE: "20260805"
+  PYTHON_LINUX_AMD64_SHA256: a3a4e4b81b138960c7c546694df8a77578c0b6aa46d47e96f49b9e10e8f860c9
+
+jobs:
+  verify:
+    name: source-only-recovery-verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RECOVERY_SCOPE: ${{ inputs.scope || 'all' }}
+    steps:
+      - name: Check out recovery source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install checksum-verified Go
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/go.tar.gz"
+          toolchains="${RUNNER_TEMP}/toolchains"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${archive}"
+          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${toolchains}"
+          tar -xzf "${archive}" -C "${toolchains}"
+          printf '%s\n' "${toolchains}/go/bin" >>"${GITHUB_PATH}"
+
+      - name: Install checksum-verified Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/python.tar.gz"
+          toolchains="${RUNNER_TEMP}/toolchains"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_STANDALONE_RELEASE}/cpython-${PYTHON_VERSION}+${PYTHON_STANDALONE_RELEASE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz" \
+            --output "${archive}"
+          printf '%s  %s\n' "${PYTHON_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${toolchains}"
+          tar -xzf "${archive}" -C "${toolchains}"
+          printf '%s\n' "${toolchains}/python/bin" >>"${GITHUB_PATH}"
+
+      - name: Verify recovery tests without live access
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RECOVERY_SCOPE}" in
+            all)
+              python3 tests/recovery/test_database_restore.py
+              python3 tests/recovery/test_artifact_restore.py
+              ;;
+            database)
+              python3 tests/recovery/test_database_restore.py
+              ;;
+            artifacts)
+              python3 tests/recovery/test_artifact_restore.py
+              ;;
+            network)
+              test -s runbooks/network-isolation-failure.md
+              ;;
+            cluster)
+              test -s runbooks/cluster-control-plane-failure.md
+              ;;
+            regional)
+              test -s runbooks/regional-recovery.md
+              ;;
+          esac
+
+      - name: Emit a source-only verification record
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -n \
+            --arg apiVersion "infrastructure.mindclade.dev/recovery-verification/v1" \
+            --arg scope "${RECOVERY_SCOPE}" \
+            --arg sourceCommit "${GITHUB_SHA}" \
+            --arg sourceTree "${source_tree}" \
+            --arg result "source-contract-passed" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            '{apiVersion: $apiVersion, scope: $scope, sourceCommit: $sourceCommit, sourceTree: $sourceTree, result: $result, runId: $runId, runAttempt: $runAttempt, connectedQualification: false, mutationPerformed: false}' \
+            >"${RUNNER_TEMP}/recovery.verification.json"
+
+      - name: Retain the redacted source verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: recovery-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery.verification.json
+          if-no-files-found: error
+          retention-days: 90

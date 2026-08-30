@@ -1,0 +1,27 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: ResourceProfileCatalog
+resourceProfiles:
+  - name: development
+    highAvailabilityRequired: false
+    deletionProtectionRequired: true
+    backupRetentionDays: 7
+    minimumZones: 1
+    costGuardrail: low
+  - name: staging
+    highAvailabilityRequired: true
+    deletionProtectionRequired: true
+    backupRetentionDays: 14
+    minimumZones: 2
+    costGuardrail: moderate
+  - name: production
+    highAvailabilityRequired: true
+    deletionProtectionRequired: true
+    backupRetentionDays: 35
+    minimumZones: 3
+    costGuardrail: reliability-first
+  - name: restricted
+    highAvailabilityRequired: true
+    deletionProtectionRequired: true
+    backupRetentionDays: 35
+    minimumZones: 3
+    costGuardrail: security-first

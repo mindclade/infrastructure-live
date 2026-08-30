@@ -1,0 +1,23 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: DataClassCatalog
+dataClasses:
+  - name: public
+    publicAccessPermitted: true
+    customerManagedEncryptionRequired: false
+    auditDataAccessRequired: false
+    minimumRetentionDays: 0
+  - name: internal
+    publicAccessPermitted: false
+    customerManagedEncryptionRequired: false
+    auditDataAccessRequired: true
+    minimumRetentionDays: 30
+  - name: confidential
+    publicAccessPermitted: false
+    customerManagedEncryptionRequired: true
+    auditDataAccessRequired: true
+    minimumRetentionDays: 90
+  - name: restricted
+    publicAccessPermitted: false
+    customerManagedEncryptionRequired: true
+    auditDataAccessRequired: true
+    minimumRetentionDays: 365

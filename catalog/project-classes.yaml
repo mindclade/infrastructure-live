@@ -1,0 +1,27 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: ProjectClassCatalog
+projectClasses:
+  - name: workload-nonproduction
+    folderBindingRequired: true
+    billingBindingRequired: true
+    deletionProtection: true
+    sharedVpcServiceProject: true
+    allowedEnvironmentTiers: [development]
+  - name: workload-preproduction
+    folderBindingRequired: true
+    billingBindingRequired: true
+    deletionProtection: true
+    sharedVpcServiceProject: true
+    allowedEnvironmentTiers: [staging]
+  - name: workload-production
+    folderBindingRequired: true
+    billingBindingRequired: true
+    deletionProtection: true
+    sharedVpcServiceProject: true
+    allowedEnvironmentTiers: [production]
+  - name: workload-restricted
+    folderBindingRequired: true
+    billingBindingRequired: true
+    deletionProtection: true
+    sharedVpcServiceProject: true
+    allowedEnvironmentTiers: [restricted]

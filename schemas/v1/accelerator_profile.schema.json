@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mindclade.dev/infrastructure/v1/accelerator_profile.schema.json",
+  "title": "Accelerator profile catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "acceleratorProfiles"],
+  "properties": {
+    "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
+    "kind": {"const": "AcceleratorProfileCatalog"},
+    "acceleratorProfiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "enabled", "acceleratorType", "acceleratorCount", "spotPermitted", "confidentialWorkloadPermitted", "dedicatedNodePool", "maximumNodes", "regionBinding", "quotaBinding"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
+          "enabled": {"type": "boolean"},
+          "acceleratorType": {"enum": ["nvidia-l4", "nvidia-h100-80gb"]},
+          "acceleratorCount": {"type": "integer", "minimum": 1, "maximum": 8},
+          "spotPermitted": {"type": "boolean"},
+          "confidentialWorkloadPermitted": {"type": "boolean"},
+          "dedicatedNodePool": {"const": true},
+          "maximumNodes": {"type": "integer", "minimum": 1, "maximum": 128},
+          "regionBinding": {"type": ["string", "null"], "pattern": "^[a-z]+-[a-z]+[0-9]$"},
+          "quotaBinding": {"type": ["string", "null"], "pattern": "^[A-Za-z][A-Za-z0-9_-]{2,126}$"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+            "then": {"properties": {"regionBinding": {"type": "string"}, "quotaBinding": {"type": "string"}}},
+            "else": {"properties": {"regionBinding": {"type": "null"}, "quotaBinding": {"type": "null"}}}
+          }
+        ]
+      }
+    }
+  }
+}

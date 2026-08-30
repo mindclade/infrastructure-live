@@ -1,0 +1,43 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: EnvironmentCatalog
+environments:
+  - name: development
+    enabled: false
+    productionLike: false
+    regionProfile: central-us
+    projectClass: workload-nonproduction
+    dataClasses: [public, internal]
+    resourceProfile: development
+    acceleratorProfiles: [gpu-development]
+    approvalMode: pull-request
+    gitopsPromotionMode: automatic-after-evidence
+  - name: staging
+    enabled: false
+    productionLike: true
+    regionProfile: central-us-with-east-recovery
+    projectClass: workload-preproduction
+    dataClasses: [public, internal, confidential]
+    resourceProfile: staging
+    acceleratorProfiles: [gpu-validation]
+    approvalMode: protected-environment
+    gitopsPromotionMode: manual
+  - name: production
+    enabled: false
+    productionLike: true
+    regionProfile: central-us-with-east-recovery
+    projectClass: workload-production
+    dataClasses: [public, internal, confidential]
+    resourceProfile: production
+    acceleratorProfiles: [gpu-production]
+    approvalMode: protected-environment
+    gitopsPromotionMode: manual
+  - name: restricted
+    enabled: false
+    productionLike: true
+    regionProfile: central-us-restricted
+    projectClass: workload-restricted
+    dataClasses: [restricted]
+    resourceProfile: restricted
+    acceleratorProfiles: [gpu-restricted]
+    approvalMode: protected-environment-two-person
+    gitopsPromotionMode: manual

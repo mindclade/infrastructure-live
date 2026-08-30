@@ -1,0 +1,43 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: AcceleratorProfileCatalog
+acceleratorProfiles:
+  - name: gpu-development
+    enabled: false
+    acceleratorType: nvidia-l4
+    acceleratorCount: 1
+    spotPermitted: true
+    confidentialWorkloadPermitted: false
+    dedicatedNodePool: true
+    maximumNodes: 2
+    regionBinding: null
+    quotaBinding: null
+  - name: gpu-validation
+    enabled: false
+    acceleratorType: nvidia-l4
+    acceleratorCount: 1
+    spotPermitted: true
+    confidentialWorkloadPermitted: false
+    dedicatedNodePool: true
+    maximumNodes: 4
+    regionBinding: null
+    quotaBinding: null
+  - name: gpu-production
+    enabled: false
+    acceleratorType: nvidia-h100-80gb
+    acceleratorCount: 8
+    spotPermitted: false
+    confidentialWorkloadPermitted: false
+    dedicatedNodePool: true
+    maximumNodes: 32
+    regionBinding: null
+    quotaBinding: null
+  - name: gpu-restricted
+    enabled: false
+    acceleratorType: nvidia-h100-80gb
+    acceleratorCount: 8
+    spotPermitted: false
+    confidentialWorkloadPermitted: true
+    dedicatedNodePool: true
+    maximumNodes: 16
+    regionBinding: null
+    quotaBinding: null

@@ -1,0 +1,15 @@
+# Infrastructure authority requires infrastructure and security review.
+* @mindclade/infrastructure @mindclade/security
+
+/.github/ @mindclade/infrastructure @mindclade/security
+/catalog/ @mindclade/infrastructure @mindclade/platform
+/schemas/ @mindclade/platform @mindclade/security
+/opentofu/ @mindclade/infrastructure @mindclade/security
+/policy/ @mindclade/security @mindclade/infrastructure
+/tests/ @mindclade/infrastructure @mindclade/platform
+/tooling/ @mindclade/platform @mindclade/infrastructure
+/runbooks/ @mindclade/infrastructure @mindclade/security
+/BUILD.bazel @mindclade/platform @mindclade/infrastructure
+/MODULE.bazel @mindclade/platform @mindclade/infrastructure
+/component.yaml @mindclade/platform @mindclade/infrastructure
+/SECURITY.md @mindclade/security

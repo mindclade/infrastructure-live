@@ -1,0 +1,31 @@
+apiVersion: infrastructure.mindclade.dev/v1
+kind: ServiceCapabilityCatalog
+serviceCapabilities:
+  - name: foundation
+    requiredApis: [cloudbilling.googleapis.com, cloudresourcemanager.googleapis.com, iam.googleapis.com, serviceusage.googleapis.com]
+    exportKinds: [project]
+    stateBoundary: per-environment
+  - name: network
+    requiredApis: [compute.googleapis.com, dns.googleapis.com, servicenetworking.googleapis.com]
+    exportKinds: [network, subnetwork, private-dns-zone]
+    stateBoundary: per-environment
+  - name: artifacts
+    requiredApis: [artifactregistry.googleapis.com, cloudkms.googleapis.com, storage.googleapis.com]
+    exportKinds: [artifact-registry, artifact-bucket]
+    stateBoundary: per-environment
+  - name: data-services
+    requiredApis: [sqladmin.googleapis.com, pubsub.googleapis.com, secretmanager.googleapis.com, cloudkms.googleapis.com]
+    exportKinds: [database-instance, topic, kms-key-reference]
+    stateBoundary: per-environment
+  - name: clusters
+    requiredApis: [binaryauthorization.googleapis.com, cloudkms.googleapis.com, cloudresourcemanager.googleapis.com, container.googleapis.com, gkehub.googleapis.com, iam.googleapis.com, secretmanager.googleapis.com]
+    exportKinds: [cluster-membership, workload-identity-pool, argocd-prerequisite]
+    stateBoundary: per-environment
+  - name: ci-execution
+    requiredApis: [cloudresourcemanager.googleapis.com, compute.googleapis.com, iam.googleapis.com, secretmanager.googleapis.com]
+    exportKinds: [build-execution-pool]
+    stateBoundary: per-environment
+  - name: observability
+    requiredApis: [cloudkms.googleapis.com, cloudresourcemanager.googleapis.com, logging.googleapis.com, monitoring.googleapis.com]
+    exportKinds: [log-bucket, metrics-scope]
+    stateBoundary: per-environment

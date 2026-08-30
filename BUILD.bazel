@@ -1,0 +1,116 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+package(default_visibility = ["//visibility:private"])
+
+filegroup(
+    name = "repository_source",
+    srcs = glob([
+        ".github/**",
+        "catalog/**",
+        "opentofu/**",
+        "policy/**",
+        "runbooks/**",
+        "schemas/**",
+        "tests/**",
+        "*.md",
+        "*.yaml",
+        "*.bazel",
+        "justfile",
+        "LICENSE",
+    ]),
+)
+
+py_test(
+    name = "environment_plan_contract_test",
+    srcs = ["tests/contract/test_environment_plan.py"],
+    data = [
+        ":repository_source",
+        "//tooling:infractl",
+    ],
+    main = "tests/contract/test_environment_plan.py",
+)
+
+py_test(
+    name = "development_plan_test",
+    srcs = ["tests/plan/test_development_plan.py"],
+    data = ["//tooling:infractl"],
+    main = "tests/plan/test_development_plan.py",
+)
+
+py_test(
+    name = "staging_plan_test",
+    srcs = ["tests/plan/test_staging_plan.py"],
+    data = ["//tooling:infractl"],
+    main = "tests/plan/test_staging_plan.py",
+)
+
+py_test(
+    name = "production_plan_test",
+    srcs = ["tests/plan/test_production_plan.py"],
+    data = ["//tooling:infractl"],
+    main = "tests/plan/test_production_plan.py",
+)
+
+py_test(
+    name = "cross_environment_denial_test",
+    srcs = ["tests/security/test_cross_environment_denial.py"],
+    data = [":repository_source"],
+    main = "tests/security/test_cross_environment_denial.py",
+)
+
+py_test(
+    name = "partial_apply_reconciliation_test",
+    srcs = ["tests/failure/test_partial_apply_reconciliation.py"],
+    data = ["//tooling:infractl"],
+    main = "tests/failure/test_partial_apply_reconciliation.py",
+)
+
+py_test(
+    name = "cloud_drift_classification_test",
+    srcs = ["tests/drift/test_cloud_drift_classification.py"],
+    data = ["//tooling:infractl"],
+    main = "tests/drift/test_cloud_drift_classification.py",
+)
+
+py_test(
+    name = "database_restore_test",
+    srcs = ["tests/recovery/test_database_restore.py"],
+    data = [":repository_source"],
+    main = "tests/recovery/test_database_restore.py",
+)
+
+py_test(
+    name = "artifact_restore_test",
+    srcs = ["tests/recovery/test_artifact_restore.py"],
+    data = [":repository_source"],
+    main = "tests/recovery/test_artifact_restore.py",
+)
+
+py_test(
+    name = "accelerator_profile_test",
+    srcs = ["tests/capacity/test_accelerator_profile.py"],
+    data = [
+        ":repository_source",
+        "//tooling:infractl",
+    ],
+    main = "tests/capacity/test_accelerator_profile.py",
+)
+
+test_suite(
+    name = "tests",
+    tests = [
+        ":accelerator_profile_test",
+        ":artifact_restore_test",
+        ":cloud_drift_classification_test",
+        ":cross_environment_denial_test",
+        ":database_restore_test",
+        ":development_plan_test",
+        ":environment_plan_contract_test",
+        ":partial_apply_reconciliation_test",
+        ":production_plan_test",
+        ":staging_plan_test",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["component.yaml"])

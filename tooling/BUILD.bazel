@@ -1,0 +1,52 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+package(default_visibility = ["//visibility:private"])
+
+go_library(
+    name = "catalog",
+    srcs = ["internal/catalog/catalog.go"],
+    importpath = "github.com/mindclade/infrastructure-live/tooling/internal/catalog",
+    deps = [
+        "@com_github_santhosh_tekuri_jsonschema_v5//:jsonschema",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_library(
+    name = "plan",
+    srcs = ["internal/plan/plan.go"],
+    importpath = "github.com/mindclade/infrastructure-live/tooling/internal/plan",
+)
+
+go_library(
+    name = "policy",
+    srcs = ["internal/policy/policy.go"],
+    importpath = "github.com/mindclade/infrastructure-live/tooling/internal/policy",
+)
+
+go_library(
+    name = "drift",
+    srcs = ["internal/drift/drift.go"],
+    importpath = "github.com/mindclade/infrastructure-live/tooling/internal/drift",
+)
+
+go_library(
+    name = "exports",
+    srcs = ["internal/exports/exports.go"],
+    importpath = "github.com/mindclade/infrastructure-live/tooling/internal/exports",
+)
+
+go_binary(
+    name = "infractl",
+    srcs = ["cmd/infractl/main.go"],
+    deps = [
+        ":catalog",
+        ":drift",
+        ":exports",
+        ":plan",
+        ":policy",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["go.mod", "go.sum"])

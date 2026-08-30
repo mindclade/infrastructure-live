@@ -1,0 +1,171 @@
+name: drift-detection
+
+"on":
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-drift-detection
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26.6"
+  GO_LINUX_AMD64_SHA256: 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+  TOFU_VERSION: "1.12.2"
+  TOFU_LINUX_AMD64_SHA256: dc0ad16a42b3bfb5f3ceff3dcd5e9cd4c55271fae9f4bfe611749ff8ae6ec23c
+
+jobs:
+  preflight:
+    name: connected-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CONNECTED_READY: ${{ vars.INFRASTRUCTURE_CONNECTED_READY }}
+    steps:
+      - name: Require qualified read-only bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${CONNECTED_READY}" = "true"
+
+  classify:
+    name: ${{ matrix.environment }}-${{ matrix.stack }}
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: infrastructure-${{ matrix.environment }}-plan
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [development, staging, production, restricted]
+        stack: [foundation, network, artifacts, data-services, clusters, ci-execution, observability]
+    env:
+      STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
+      STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
+      WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_PLAN }}
+      WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_PLAN }}
+    steps:
+      - name: Require environment-scoped read-only bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STATE_BUCKET}"
+          test -n "${STATE_PREFIX}"
+          test -n "${WIF_PROVIDER}"
+          test -n "${WIF_SERVICE_ACCOUNT}"
+
+      - name: Check out exact main source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install checksum-verified Go
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/go.tar.gz"
+          toolchains="${RUNNER_TEMP}/toolchains"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${archive}"
+          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${toolchains}"
+          tar -xzf "${archive}" -C "${toolchains}"
+          printf '%s\n' "${toolchains}/go/bin" >>"${GITHUB_PATH}"
+
+      - name: Install checksum-verified OpenTofu
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/tofu.zip"
+          bin_dir="${RUNNER_TEMP}/tofu-bin"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
+            --output "${archive}"
+          printf '%s  %s\n' "${TOFU_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
+          mkdir -p "${bin_dir}"
+          unzip -q "${archive}" -d "${bin_dir}"
+          chmod 0755 "${bin_dir}/tofu"
+          printf '%s\n' "${bin_dir}" >>"${GITHUB_PATH}"
+
+      - name: Authenticate the read-only plan identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Build the redacting classifier
+        run: |
+          set -euo pipefail
+          umask 077
+          cd tooling
+          go build -trimpath -o "${RUNNER_TEMP}/infractl" ./cmd/infractl
+
+      - name: Create a read-only drift plan and redacted evidence
+        id: drift
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          STACK: ${{ matrix.stack }}
+        run: |
+          set -euo pipefail
+          umask 077
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          data_dir="${RUNNER_TEMP}/tofu-data-${ENVIRONMENT}-${STACK}"
+          export TF_DATA_DIR="${data_dir}"
+          tofu -chdir="${root}" init -input=false \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}"
+          set +e
+          tofu -chdir="${root}" plan -input=false -lock=false -detailed-exitcode \
+            -out="${RUNNER_TEMP}/drift.tfplan"
+          plan_status="$?"
+          set -e
+          if [[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]; then
+            exit "${plan_status}"
+          fi
+          tofu -chdir="${root}" show -json "${RUNNER_TEMP}/drift.tfplan" >"${RUNNER_TEMP}/drift.plan.json"
+          set +e
+          "${RUNNER_TEMP}/infractl" plan classify \
+            --input "${RUNNER_TEMP}/drift.plan.json" >"${RUNNER_TEMP}/drift.classification.json"
+          classifier_status="$?"
+          set -e
+          if [[ "${classifier_status}" -ne 0 && "${classifier_status}" -ne 2 ]]; then
+            exit "${classifier_status}"
+          fi
+          plan_digest="$(jq -er '.digest' "${RUNNER_TEMP}/drift.classification.json")"
+          jq -n \
+            --arg apiVersion "infrastructure.mindclade.dev/drift-evidence/v1" \
+            --arg environment "${ENVIRONMENT}" \
+            --arg stack "${STACK}" \
+            --arg sourceCommit "${GITHUB_SHA}" \
+            --arg planDigest "${plan_digest}" \
+            --argjson planExitCode "${plan_status}" \
+            --slurpfile classification "${RUNNER_TEMP}/drift.classification.json" \
+            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, planExitCode: $planExitCode, classification: $classification[0]}' \
+            >"${RUNNER_TEMP}/drift.evidence.json"
+          rm -f "${RUNNER_TEMP}/drift.tfplan" "${RUNNER_TEMP}/drift.plan.json"
+          printf 'plan_status=%s\n' "${plan_status}" >>"${GITHUB_OUTPUT}"
+
+      - name: Retain redacted drift evidence only
+        if: always() && steps.drift.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: drift-${{ matrix.environment }}-${{ matrix.stack }}-${{ github.sha }}
+          path: ${{ runner.temp }}/drift.evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail when drift exists
+        if: steps.drift.outputs.plan_status == '2'
+        run: exit 2
