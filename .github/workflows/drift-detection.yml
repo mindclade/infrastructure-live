@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: "1.26.6"
-  GO_LINUX_AMD64_SHA256: 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
-  TOFU_VERSION: "1.12.2"
-  TOFU_LINUX_AMD64_SHA256: dc0ad16a42b3bfb5f3ceff3dcd5e9cd4c55271fae9f4bfe611749ff8ae6ec23c
+  GO_VERSION: "1.26.7"
+  GO_LINUX_AMD64_SHA256: ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca
+  TOFU_VERSION: "1.12.6"
+  TOFU_LINUX_AMD64_SHA256: 5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8
 
 jobs:
   preflight:
@@ -34,10 +34,10 @@ jobs:
           test "${CONNECTED_READY}" = "true"
 
   classify:
-    name: ${{ matrix.environment }}-${{ matrix.stack }}
+    name: ${{ matrix.environment }}
     needs: preflight
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 180
     environment: trusted-build
     permissions:
       contents: read
@@ -46,7 +46,6 @@ jobs:
       fail-fast: false
       matrix:
         environment: [development, staging, production, restricted]
-        stack: [foundation, network, artifacts, data-services, clusters, ci-execution, observability]
     env:
       STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
       STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
@@ -123,92 +122,175 @@ jobs:
         shell: bash
         env:
           ENVIRONMENT: ${{ matrix.environment }}
-          STACK: ${{ matrix.stack }}
         run: |
           set -euo pipefail
           umask 077
-          root="opentofu/live/${ENVIRONMENT}/${STACK}"
-          data_dir="${RUNNER_TEMP}/tofu-data-${ENVIRONMENT}-${STACK}"
-          saved_plan="${RUNNER_TEMP}/drift.tfplan"
-          plan_json="${RUNNER_TEMP}/drift.plan.json"
-          plan_log="${RUNNER_TEMP}/drift.plan.log"
-          classification="${RUNNER_TEMP}/drift.classification.json"
-          policy_result="${RUNNER_TEMP}/drift.policy.json"
-          evidence="${RUNNER_TEMP}/drift.evidence.json"
-          cleanup() {
-            rm -f "${saved_plan}" "${plan_json}" "${plan_log}" "${classification}" "${policy_result}"
+          evidence_dir="${RUNNER_TEMP}/drift-evidence-${ENVIRONMENT}"
+          summary_tsv="${RUNNER_TEMP}/drift-summary-${ENVIRONMENT}.tsv"
+          mkdir -m 0700 "${evidence_dir}"
+          : >"${summary_tsv}"
+          failures=0
+
+          emit_failure() {
+            local stack="$1"
+            local reason="$2"
+            local exit_code="$3"
+            jq -n \
+              --arg apiVersion "infrastructure.mindclade.dev/drift-evidence/v1" \
+              --arg environment "${ENVIRONMENT}" \
+              --arg stack "${stack}" \
+              --arg sourceCommit "${GITHUB_SHA}" \
+              --arg status "failed" \
+              --arg reasonCode "${reason}" \
+              --argjson exitCode "${exit_code}" \
+              '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, status: $status, reasonCode: $reasonCode, exitCode: $exitCode}' \
+              >"${evidence_dir}/${stack}.evidence.json"
+            printf '%s\tfailed\t%s\n' "${stack}" "${reason}" >>"${summary_tsv}"
+            failures=$((failures + 1))
           }
-          trap cleanup EXIT
-          export TF_DATA_DIR="${data_dir}"
-          tofu -chdir="${root}" init -input=false \
-            -backend-config="bucket=${STATE_BUCKET}" \
-            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}"
-          set +e
-          tofu -chdir="${root}" plan -input=false -lock=false -detailed-exitcode \
-            -out="${saved_plan}" >"${plan_log}" 2>&1
-          plan_status="$?"
-          set -e
-          if [[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]; then
-            printf '::error::OpenTofu drift plan failed with exit code %s; raw output is suppressed.\n' "${plan_status}"
-            exit 1
-          fi
-          tofu -chdir="${root}" show -json "${saved_plan}" >"${plan_json}" 2>>"${plan_log}"
-          set +e
-          "${RUNNER_TEMP}/infractl" plan classify \
-            --input "${plan_json}" >"${classification}" 2>>"${plan_log}"
-          classifier_status="$?"
-          set -e
-          if [[ "${classifier_status}" -ne 0 && "${classifier_status}" -ne 2 ]]; then
-            printf '::error::Drift plan classification failed with exit code %s; raw output is suppressed.\n' "${classifier_status}"
-            exit 1
-          fi
-          set +e
-          conftest test "${plan_json}" \
-            --policy policy --all-namespaces --output json >"${policy_result}" 2>>"${plan_log}"
-          policy_status="$?"
-          set -e
-          if [[ "${policy_status}" -ne 0 && "${policy_status}" -ne 1 ]]; then
-            printf '::error::Drift plan policy evaluation failed with exit code %s; raw output is suppressed.\n' "${policy_status}"
-            exit 1
-          fi
-          if ! jq -e . "${policy_result}" >/dev/null 2>>"${plan_log}"; then
-            printf '::error::Drift plan policy evaluation returned invalid JSON; raw output is suppressed.\n'
-            exit 1
-          fi
-          policy_passed=false
-          if [[ "${policy_status}" -eq 0 ]]; then
-            policy_passed=true
-          fi
-          plan_digest="$(jq -er '.digest' "${classification}")"
-          policy_digest="sha256:$(sha256sum "${policy_result}" | awk '{print $1}')"
-          jq -n \
-            --arg apiVersion "infrastructure.mindclade.dev/drift-evidence/v1" \
+
+          for stack in foundation network artifacts data-services clusters ci-execution observability; do
+            root="opentofu/live/${ENVIRONMENT}/${stack}"
+            work_dir="${RUNNER_TEMP}/drift-${ENVIRONMENT}-${stack}"
+            data_dir="${work_dir}/tofu-data"
+            saved_plan="${work_dir}/drift.tfplan"
+            plan_json="${work_dir}/drift.plan.json"
+            plan_log="${work_dir}/drift.plan.log"
+            classification="${work_dir}/drift.classification.json"
+            policy_result="${work_dir}/drift.policy.json"
+            mkdir -m 0700 "${work_dir}"
+            export TF_DATA_DIR="${data_dir}"
+
+            set +e
+            tofu -chdir="${root}" init -input=false \
+              -backend-config="bucket=${STATE_BUCKET}" \
+              -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${stack}" \
+              >"${plan_log}" 2>&1
+            init_status="$?"
+            set -e
+            if [[ "${init_status}" -ne 0 ]]; then
+              printf '::error title=%s/%s::OpenTofu init failed; raw output is suppressed.\n' "${ENVIRONMENT}" "${stack}"
+              emit_failure "${stack}" "TOFU_INIT_FAILED" "${init_status}"
+              rm -rf "${work_dir}"
+              continue
+            fi
+
+            set +e
+            tofu -chdir="${root}" plan -input=false -lock=false -detailed-exitcode \
+              -out="${saved_plan}" >>"${plan_log}" 2>&1
+            plan_status="$?"
+            set -e
+            if [[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]; then
+              printf '::error title=%s/%s::OpenTofu plan failed; raw output is suppressed.\n' "${ENVIRONMENT}" "${stack}"
+              emit_failure "${stack}" "TOFU_PLAN_FAILED" "${plan_status}"
+              rm -rf "${work_dir}"
+              continue
+            fi
+
+            set +e
+            tofu -chdir="${root}" show -json "${saved_plan}" >"${plan_json}" 2>>"${plan_log}"
+            show_status="$?"
+            set -e
+            if [[ "${show_status}" -ne 0 ]]; then
+              emit_failure "${stack}" "TOFU_SHOW_FAILED" "${show_status}"
+              rm -rf "${work_dir}"
+              continue
+            fi
+
+            set +e
+            "${RUNNER_TEMP}/infractl" plan classify \
+              --input "${plan_json}" >"${classification}" 2>>"${plan_log}"
+            classifier_status="$?"
+            set -e
+            if [[ "${classifier_status}" -ne 0 && "${classifier_status}" -ne 2 ]]; then
+              emit_failure "${stack}" "PLAN_CLASSIFICATION_FAILED" "${classifier_status}"
+              rm -rf "${work_dir}"
+              continue
+            fi
+
+            set +e
+            conftest test "${plan_json}" \
+              --policy policy --all-namespaces --output json >"${policy_result}" 2>>"${plan_log}"
+            policy_status="$?"
+            set -e
+            if [[ "${policy_status}" -ne 0 && "${policy_status}" -ne 1 ]]; then
+              emit_failure "${stack}" "POLICY_EVALUATION_FAILED" "${policy_status}"
+              rm -rf "${work_dir}"
+              continue
+            fi
+            if ! jq -e . "${policy_result}" >/dev/null 2>>"${plan_log}"; then
+              emit_failure "${stack}" "POLICY_RESULT_INVALID" "1"
+              rm -rf "${work_dir}"
+              continue
+            fi
+
+            policy_passed=false
+            if [[ "${policy_status}" -eq 0 ]]; then
+              policy_passed=true
+            fi
+            plan_digest="$(jq -er '.digest' "${classification}")"
+            policy_digest="sha256:$(sha256sum "${policy_result}" | awk '{print $1}')"
+            status=passed
+            reason=NO_DRIFT
+            if [[ "${plan_status}" -eq 2 ]]; then
+              status=failed
+              reason=DRIFT_DETECTED
+              failures=$((failures + 1))
+            elif [[ "${policy_passed}" != true ]]; then
+              status=failed
+              reason=POLICY_DENIED
+              failures=$((failures + 1))
+            fi
+            jq -n \
+              --arg apiVersion "infrastructure.mindclade.dev/drift-evidence/v1" \
+              --arg environment "${ENVIRONMENT}" \
+              --arg stack "${stack}" \
+              --arg sourceCommit "${GITHUB_SHA}" \
+              --arg status "${status}" \
+              --arg reasonCode "${reason}" \
+              --arg planDigest "${plan_digest}" \
+              --arg policyDigest "${policy_digest}" \
+              --argjson planExitCode "${plan_status}" \
+              --argjson policyPassed "${policy_passed}" \
+              --slurpfile classification "${classification}" \
+              '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, status: $status, reasonCode: $reasonCode, planDigest: $planDigest, planExitCode: $planExitCode, policyPassed: $policyPassed, policyDigest: $policyDigest, classification: $classification[0]}' \
+              >"${evidence_dir}/${stack}.evidence.json"
+            printf '%s\t%s\t%s\n' "${stack}" "${status}" "${reason}" >>"${summary_tsv}"
+            rm -rf "${work_dir}"
+          done
+
+          jq -s \
+            --arg apiVersion "infrastructure.mindclade.dev/drift-manifest/v1" \
             --arg environment "${ENVIRONMENT}" \
-            --arg stack "${STACK}" \
             --arg sourceCommit "${GITHUB_SHA}" \
-            --arg planDigest "${plan_digest}" \
-            --arg policyDigest "${policy_digest}" \
-            --argjson planExitCode "${plan_status}" \
-            --argjson policyPassed "${policy_passed}" \
-            --slurpfile classification "${classification}" \
-            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, planExitCode: $planExitCode, policyPassed: $policyPassed, policyDigest: $policyDigest, classification: $classification[0]}' \
-            >"${evidence}"
-          printf 'plan_status=%s\n' "${plan_status}" >>"${GITHUB_OUTPUT}"
-          printf 'policy_passed=%s\n' "${policy_passed}" >>"${GITHUB_OUTPUT}"
+            --argjson failureCount "${failures}" \
+            '{apiVersion: $apiVersion, environment: $environment, sourceCommit: $sourceCommit, failureCount: $failureCount, results: .}' \
+            "${evidence_dir}"/*.evidence.json >"${evidence_dir}/manifest.json"
+          {
+            printf '### Drift: %s\n\n' "${ENVIRONMENT}"
+            printf '| Stack | Result | Reason |\n|---|---|---|\n'
+            while IFS="$(printf '\t')" read -r stack status reason; do
+              # shellcheck disable=SC2016
+              printf '| `%s` | %s | `%s` |\n' "${stack}" "${status}" "${reason}"
+            done <"${summary_tsv}"
+          } >>"${GITHUB_STEP_SUMMARY}"
+          printf 'failure_count=%s\n' "${failures}" >>"${GITHUB_OUTPUT}"
 
       - name: Retain redacted drift evidence only
-        if: always() && steps.drift.outcome == 'success'
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: drift-${{ matrix.environment }}-${{ matrix.stack }}-${{ github.sha }}
-          path: ${{ runner.temp }}/drift.evidence.json
+          name: drift-${{ matrix.environment }}-${{ github.sha }}
+          path: ${{ runner.temp }}/drift-evidence-${{ matrix.environment }}
           if-no-files-found: error
           retention-days: 30
 
-      - name: Fail when drift exists
-        if: steps.drift.outputs.plan_status == '2'
-        run: exit 2
-
-      - name: Fail when plan policy is denied
-        if: steps.drift.outputs.policy_passed == 'false'
-        run: exit 1
+      - name: Enforce aggregate drift result
+        if: always()
+        env:
+          DRIFT_OUTCOME: ${{ steps.drift.outcome }}
+          FAILURE_COUNT: ${{ steps.drift.outputs.failure_count }}
+        run: |
+          set -euo pipefail
+          test "${DRIFT_OUTCOME}" = success
+          test "${FAILURE_COUNT}" = 0

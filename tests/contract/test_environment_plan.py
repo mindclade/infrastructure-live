@@ -275,14 +275,11 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertNotIn("id-token: write", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertIn(
-            "DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25",
+            "mindclade/.github/.github/workflows/reusable-nix-validation.yml@c097ef86c25991a400050c13e78574e8d3d8c071",
             workflow,
         )
-        self.assertIn("nix build --no-update-lock-file .#toolchain", workflow)
-        self.assertIn("nix flake check --no-update-lock-file", workflow)
-        self.assertIn(
-            "nix develop --no-update-lock-file .#ci --command just ci", workflow
-        )
+        self.assertIn("VALIDATE_RESULT: ${{ needs.validate.result }}", workflow)
+        self.assertIn('test "${VALIDATE_RESULT}" = success', workflow)
         self.assertIn("@mindclade/platform-operations", codeowners)
         self.assertIn("@mindclade/security", codeowners)
         self.assertNotIn("@mindclade/infrastructure", codeowners)
@@ -333,7 +330,10 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         final_cleanup = workflow_step_source(workflow, "Remove transient plan material")
 
         self.assertIn('plan_log="${RUNNER_TEMP}/post-apply.plan.log"', step)
-        self.assertIn('-out="${saved_plan}" >"${plan_log}" 2>&1', step)
+        self.assertIn("matrix:\n        environment: [development, staging, production, restricted]", workflow)
+        self.assertNotIn("matrix.stack", workflow)
+        self.assertIn("for stack in foundation network artifacts data-services clusters ci-execution observability", step)
+        self.assertIn('-out="${saved_plan}" >>"${plan_log}" 2>&1', step)
         self.assertIn('"${RUNNER_TEMP}/infractl" plan classify', step)
         self.assertIn("{creates, updates, deletes, replaces, reads, noOps, safe}", step)
         self.assertIn("only the redacted classification is shown", step)
@@ -409,16 +409,16 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("policyPassed: $policyPassed", step)
         self.assertIn("policyDigest: $policyDigest", step)
         self.assertNotIn("--slurpfile policy", step)
-        self.assertIn('rm -f "${saved_plan}" "${plan_json}" "${plan_log}" "${classification}" "${policy_result}"', step)
+        self.assertIn('rm -rf "${work_dir}"', step)
+        self.assertIn("infrastructure.mindclade.dev/drift-manifest/v1", step)
+        self.assertIn('printf \'failure_count=%s\\n\'', step)
         self.assertNotIn('cat "${plan_log}"', step)
         self.assertNotIn('tee "${plan_log}"', step)
 
         upload = workflow.index("- name: Retain redacted drift evidence only")
-        drift_failure = workflow.index("- name: Fail when drift exists")
-        policy_failure = workflow.index("- name: Fail when plan policy is denied")
-        self.assertLess(upload, drift_failure)
-        self.assertLess(upload, policy_failure)
-        self.assertIn("steps.drift.outputs.policy_passed == 'false'", workflow)
+        aggregate_failure = workflow.index("- name: Enforce aggregate drift result")
+        self.assertLess(upload, aggregate_failure)
+        self.assertIn('test "${FAILURE_COUNT}" = 0', workflow)
 
     def test_all_recovery_scope_uses_the_same_dispatch_as_each_single_scope(self):
         workflow = workflow_source("disaster-recovery.yml")
