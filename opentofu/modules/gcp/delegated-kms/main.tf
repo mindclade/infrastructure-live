@@ -36,6 +36,11 @@ resource "google_kms_crypto_key" "this" {
   destroy_scheduled_duration = each.value.destroy_scheduled_duration
   labels                     = each.value.labels
 
+  version_template {
+    algorithm        = each.value.algorithm
+    protection_level = each.value.protection_level
+  }
+
   depends_on = [google_kms_key_ring.this]
 
   lifecycle { prevent_destroy = true }

@@ -10,7 +10,7 @@ serviceCapabilities:
     exportKinds: [network, subnetwork, private-dns-zone]
     stateBoundary: per-environment
   - name: artifacts
-    requiredApis: [artifactregistry.googleapis.com, cloudkms.googleapis.com, storage.googleapis.com]
+    requiredApis: [artifactregistry.googleapis.com, cloudkms.googleapis.com, logging.googleapis.com, monitoring.googleapis.com, storage.googleapis.com, storageinsights.googleapis.com]
     exportKinds: [artifact-registry, artifact-bucket]
     stateBoundary: per-environment
   - name: data-services

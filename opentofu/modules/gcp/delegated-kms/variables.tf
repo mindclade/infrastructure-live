@@ -32,6 +32,8 @@ variable "key_ring_name" {
 variable "keys" {
   type = map(object({
     purpose                    = optional(string, "ENCRYPT_DECRYPT")
+    algorithm                  = optional(string, "GOOGLE_SYMMETRIC_ENCRYPTION")
+    protection_level           = optional(string, "SOFTWARE")
     rotation_period            = optional(string, "7776000s")
     destroy_scheduled_duration = optional(string, "2592000s")
     labels                     = optional(map(string), {})
@@ -41,6 +43,15 @@ variable "keys" {
   validation {
     condition     = !var.enabled || length(var.keys) > 0
     error_message = "At least one delegated key is required when enabled."
+  }
+  validation {
+    condition = !var.enabled || alltrue([
+      for key in values(var.keys) : (
+        key.algorithm == "GOOGLE_SYMMETRIC_ENCRYPTION" &&
+        contains(["SOFTWARE", "HSM"], key.protection_level)
+      )
+    ])
+    error_message = "Delegated keys require the approved symmetric algorithm and an explicit supported protection level."
   }
   validation {
     condition = !var.enabled || alltrue([

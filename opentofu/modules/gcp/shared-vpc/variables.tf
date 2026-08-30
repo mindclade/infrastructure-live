@@ -53,6 +53,37 @@ variable "subnets" {
     condition     = !var.enabled || length(var.subnets) > 0
     error_message = "At least one explicitly bound subnet is required when enabled."
   }
+  validation {
+    condition = alltrue(flatten([
+      for subnet in values(var.subnets) : [
+        for cidr in concat([subnet.cidr], values(subnet.secondary_ranges)) :
+        can(cidrnetmask(cidr)) &&
+        try(cidrhost(cidr, 0), "") == try(split("/", cidr)[0], "invalid")
+      ]
+    ]))
+    error_message = "Primary and secondary subnet ranges must be canonical IPv4 CIDRs."
+  }
+  validation {
+    condition = alltrue([
+      for cidr in concat(
+        flatten([
+          for subnet in values(var.subnets) :
+          concat([subnet.cidr], values(subnet.secondary_ranges))
+        ]),
+        var.private_service_access == null ? [] : ["${var.private_service_access.address}/${var.private_service_access.prefix_length}"]
+        ) : length([
+          for other_cidr in concat(
+            flatten([
+              for subnet in values(var.subnets) :
+              concat([subnet.cidr], values(subnet.secondary_ranges))
+            ]),
+            var.private_service_access == null ? [] : ["${var.private_service_access.address}/${var.private_service_access.prefix_length}"]
+          ) : other_cidr
+          if try(cidrcontains(cidr, other_cidr) || cidrcontains(other_cidr, cidr), true)
+      ]) == 1
+    ])
+    error_message = "Primary, secondary, and private-service CIDRs must be pairwise non-overlapping."
+  }
 }
 variable "private_service_access" {
   description = "Explicit, non-overlapping address allocation for private managed-service connectivity."

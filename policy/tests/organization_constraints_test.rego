@@ -335,6 +335,61 @@ test_accepts_provider_resource_in_catalog_primary_location if {
 	count(violations) == 0
 }
 
+test_accepts_only_catalog_enabled_ci_evidence_location_override if {
+	violations := deny with input as {
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"primary_location": "us-central1",
+			"recovery_location": "us-east1",
+			"ci_evidence_archive": {"enabled": true, "location": "NAM4"},
+		}}}},
+		"resource_changes": [
+			{
+				"address": "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[\"project-production-ci-evidence\"]",
+				"type": "google_storage_bucket",
+				"change": {"actions": ["create"], "after": {"location": "NAM4"}},
+			},
+			{
+				"address": "module.stack.module.ci_evidence_archive_kms.google_kms_key_ring.this[0]",
+				"type": "google_kms_key_ring",
+				"change": {"actions": ["create"], "after": {"location": "nam4"}},
+			},
+		],
+	}
+	count(violations) == 0
+}
+
+test_rejects_nam4_for_non_evidence_resources if {
+	violations := deny with input as {
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"primary_location": "us-central1",
+			"recovery_location": "us-east1",
+			"ci_evidence_archive": {"enabled": true, "location": "NAM4"},
+		}}}},
+		"resource_changes": [{
+			"address": "module.stack.module.buckets.google_storage_bucket.this[\"ordinary-artifacts\"]",
+			"type": "google_storage_bucket",
+			"change": {"actions": ["create"], "after": {"location": "NAM4"}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_rejects_disabled_ci_evidence_location_override if {
+	violations := deny with input as {
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"primary_location": "us-central1",
+			"recovery_location": "us-east1",
+			"ci_evidence_archive": {"enabled": false, "location": "NAM4"},
+		}}}},
+		"resource_changes": [{
+			"address": "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[\"project-production-ci-evidence\"]",
+			"type": "google_storage_bucket",
+			"change": {"actions": ["create"], "after": {"location": "NAM4"}},
+		}],
+	}
+	count(violations) == 1
+}
+
 test_rejects_restricted_cluster_referencing_development_network if {
 	violations := deny with input as {
 		"variables": {
@@ -542,4 +597,189 @@ test_rejects_shell_metacharacters_hidden_in_encoded_agent_image if {
 		}
 		count(violations) == 1
 	}
+}
+
+test_accepts_exact_ci_evidence_writer_verifier_and_service_agent_role_separation if {
+	verifier := "serviceAccount:ci-evidence-verifier@identity-project.iam.gserviceaccount.com"
+	writer := "serviceAccount:ci-evidence-writer@identity-project.iam.gserviceaccount.com"
+	insights := "serviceAccount:service-123456789012@gcp-sa-storageinsights.iam.gserviceaccount.com"
+	storage_agent := "serviceAccount:service-123456789012@gs-project-accounts.iam.gserviceaccount.com"
+	bucket := "project-production-ci-evidence"
+	violations := deny with input as {
+		"variables": {
+			"approved_iam_principals": {"value": [verifier, writer, insights, storage_agent]},
+			"approved_resource_references": {"value": [bucket, "kms-key"]},
+		},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {
+				"verifier_principal": verifier,
+				"writer_principal": writer,
+				"storage_insights_agent": insights,
+				"storage_service_agent": storage_agent,
+			},
+		}}}},
+		"resource_changes": [
+			archive_bucket_iam_change("viewer", "roles/storage.objectViewer", verifier, bucket),
+			archive_bucket_iam_change("writer", "roles/storage.objectCreator", writer, bucket),
+			archive_bucket_iam_change("inventory-writer", "roles/storage.objectCreator", insights, bucket),
+			archive_bucket_iam_change("inventory-reader", "roles/storage.insightsCollectorService", insights, bucket),
+			{
+				"address": "module.stack.module.ci_evidence_archive_kms.google_kms_crypto_key_iam_member.encrypter_decrypter[\"archive\"]",
+				"type": "google_kms_crypto_key_iam_member",
+				"change": {"actions": ["create"], "after": {
+					"crypto_key_id": "kms-key",
+					"role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+					"member": storage_agent,
+				}},
+			},
+		],
+	}
+	count(violations) == 0
+}
+
+test_rejects_ci_evidence_writer_verifier_swap_even_when_both_are_approved if {
+	verifier := "serviceAccount:ci-evidence-verifier@identity-project.iam.gserviceaccount.com"
+	writer := "serviceAccount:ci-evidence-writer@identity-project.iam.gserviceaccount.com"
+	bucket := "project-production-ci-evidence"
+	violations := deny with input as {
+		"variables": {
+			"approved_iam_principals": {"value": [verifier, writer]},
+			"approved_resource_references": {"value": [bucket]},
+		},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {"verifier_principal": verifier, "writer_principal": writer},
+		}}}},
+		"resource_changes": [archive_bucket_iam_change("swapped", "roles/storage.objectViewer", writer, bucket)],
+	}
+	count(violations) == 1
+}
+
+test_rejects_ci_evidence_principal_set_even_when_generically_approved if {
+	principal := "principalSet://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/attribute.role/writer"
+	bucket := "project-production-ci-evidence"
+	violations := deny with input as {
+		"variables": {
+			"approved_iam_principals": {"value": [principal]},
+			"approved_resource_references": {"value": [bucket]},
+		},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {
+				"writer_principal": "serviceAccount:ci-evidence-writer@identity-project.iam.gserviceaccount.com",
+			},
+		}}}},
+		"resource_changes": [archive_bucket_iam_change("principal-set", "roles/storage.objectCreator", principal, bucket)],
+	}
+	count(violations) == 1
+}
+
+test_accepts_exact_ci_evidence_audit_sink_alert_and_inventory_plan if {
+	project := "evidence-project"
+	bucket := "evidence-project-production-ci-evidence"
+	destination := sprintf("storage.googleapis.com/%s", [bucket])
+	violations := deny with input as {
+		"variables": {"approved_resource_references": {"value": [project, destination]}},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"primary_location": "us-central1",
+			"ci_evidence_archive": {
+				"enabled": true,
+				"project_id": project,
+				"bucket_name": bucket,
+				"location": "NAM4",
+			},
+		}}}},
+		"resource_changes": [
+			{
+				"address": "module.stack.google_project_iam_audit_config.ci_evidence_storage[0]",
+				"type": "google_project_iam_audit_config",
+				"change": {"actions": ["create"], "after": {
+					"project": project,
+					"service": "storage.googleapis.com",
+					"audit_log_config": [
+						{"log_type": "DATA_READ", "exempted_members": []},
+						{"log_type": "DATA_WRITE", "exempted_members": []},
+					],
+				}},
+			},
+			{
+				"address": "module.stack.google_logging_project_sink.ci_evidence_audit[0]",
+				"type": "google_logging_project_sink",
+				"change": {"actions": ["create"], "after": {
+					"project": project,
+					"name": "mindclade-ci-evidence-audit",
+					"destination": destination,
+					"unique_writer_identity": true,
+					"filter": sprintf("resource.labels.bucket_name=\"%s\" cloudaudit.googleapis.com/activity cloudaudit.googleapis.com/data_access", [bucket]),
+				}},
+			},
+			{
+				"address": "module.stack.google_logging_metric.ci_evidence_security_event[0]",
+				"type": "google_logging_metric",
+				"change": {"actions": ["create"], "after": {
+					"project": project,
+					"name": "ci_evidence_archive_security_event",
+					"filter": "storage\\.(buckets\\.(delete|lockRetentionPolicy|setIamPolicy|update)|objects\\.delete) protoPayload.status.code!=0",
+				}},
+			},
+			{
+				"address": "module.stack.google_monitoring_alert_policy.ci_evidence_security_event[0]",
+				"type": "google_monitoring_alert_policy",
+				"change": {"actions": ["create"], "after": {
+					"project": project,
+					"enabled": true,
+					"notification_channels": ["projects/evidence-project/notificationChannels/1"],
+					"conditions": [{}],
+				}},
+			},
+			{
+				"address": "module.stack.google_storage_insights_report_config.ci_evidence_inventory[0]",
+				"type": "google_storage_insights_report_config",
+				"change": {"actions": ["create"], "after": {
+					"project": project,
+					"location": "NAM4",
+					"deletion_policy": "PREVENT",
+					"force_destroy": false,
+					"frequency_options": [{"frequency": "DAILY"}],
+					"object_metadata_report_options": [{
+						"metadata_fields": ["crc32c", "name", "retentionExpirationTime", "size"],
+						"storage_filters": [{"bucket": bucket}],
+						"storage_destination_options": [{"bucket": bucket, "destination_path": "inventory/"}],
+					}],
+				}},
+			},
+		],
+	}
+	count(violations) == 0
+}
+
+test_rejects_ci_evidence_data_access_audit_exemption if {
+	project := "evidence-project"
+	violations := deny with input as {
+		"variables": {"approved_resource_references": {"value": [project]}},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {"project_id": project},
+		}}}},
+		"resource_changes": [{
+			"address": "module.stack.google_project_iam_audit_config.ci_evidence_storage[0]",
+			"type": "google_project_iam_audit_config",
+			"change": {"actions": ["create"], "after": {
+				"project": project,
+				"service": "storage.googleapis.com",
+				"audit_log_config": [
+					{"log_type": "DATA_READ", "exempted_members": ["serviceAccount:excluded@example.iam.gserviceaccount.com"]},
+					{"log_type": "DATA_WRITE", "exempted_members": []},
+				],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+archive_bucket_iam_change(key, role, member, bucket) := {
+	"address": sprintf("module.stack.module.ci_evidence_archive_bucket.google_storage_bucket_iam_member.access[\"%s\"]", [key]),
+	"type": "google_storage_bucket_iam_member",
+	"change": {"actions": ["create"], "after": {
+		"bucket": bucket,
+		"role": role,
+		"member": member,
+	}},
 }

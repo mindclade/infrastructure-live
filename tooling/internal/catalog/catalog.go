@@ -40,7 +40,7 @@ var liveStacks = []string{
 var requiredAPIsByStack = map[string][]string{
 	"foundation":    {"cloudbilling.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "serviceusage.googleapis.com"},
 	"network":       {"compute.googleapis.com", "dns.googleapis.com", "servicenetworking.googleapis.com"},
-	"artifacts":     {"artifactregistry.googleapis.com", "cloudkms.googleapis.com", "storage.googleapis.com"},
+	"artifacts":     {"artifactregistry.googleapis.com", "cloudkms.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "storage.googleapis.com", "storageinsights.googleapis.com"},
 	"data-services": {"cloudkms.googleapis.com", "pubsub.googleapis.com", "secretmanager.googleapis.com", "sqladmin.googleapis.com"},
 	"clusters":      {"binaryauthorization.googleapis.com", "cloudkms.googleapis.com", "cloudresourcemanager.googleapis.com", "container.googleapis.com", "gkehub.googleapis.com", "iam.googleapis.com", "secretmanager.googleapis.com"},
 	"ci-execution":  {"cloudresourcemanager.googleapis.com", "compute.googleapis.com", "iam.googleapis.com", "secretmanager.googleapis.com"},
@@ -55,6 +55,17 @@ var exportKindsByStack = map[string][]string{
 	"clusters":      {"cluster-membership", "workload-identity-pool", "argocd-prerequisite"},
 	"ci-execution":  {"build-execution-pool"},
 	"observability": {"log-bucket", "metrics-scope"},
+}
+
+// AllowsExportKind reports whether a stack owns the resource kind in the
+// immutable producer contract validated against the service catalog and schema.
+func AllowsExportKind(stack, kind string) bool {
+	for _, allowed := range exportKindsByStack[stack] {
+		if kind == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // Result is safe to print in CI; it never includes catalog values.

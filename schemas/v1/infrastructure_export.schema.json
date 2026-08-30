@@ -11,7 +11,7 @@
     "metadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["environment", "stack", "sourceRepository", "sourceCommit", "root", "planDigest", "schemaDigest", "generatedAt"],
+      "required": ["environment", "stack", "sourceRepository", "sourceCommit", "root", "planDigest", "providerLockDigest", "backendStateDigest", "backendLineage", "backendSerial", "schemaDigest", "generatedAt"],
       "properties": {
         "environment": {"enum": ["development", "staging", "production", "restricted"]},
         "stack": {"enum": ["foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability"]},
@@ -19,6 +19,10 @@
         "sourceCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "root": {"type": "string", "pattern": "^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$"},
         "planDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "providerLockDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "backendStateDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "backendLineage": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+        "backendSerial": {"type": "integer", "minimum": 0},
         "schemaDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "generatedAt": {"type": "string", "format": "date-time"}
       }
@@ -53,7 +57,18 @@
           "additionalProperties": false,
           "required": ["signature", "provenance"],
           "properties": {
-            "signature": {"$ref": "#/$defs/evidenceReference"},
+            "signature": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["algorithm", "keyId", "publicKey", "value", "payloadDigest"],
+              "properties": {
+                "algorithm": {"const": "Ed25519"},
+                "keyId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "publicKey": {"type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$"},
+                "value": {"type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$"},
+                "payloadDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+              }
+            },
             "provenance": {"$ref": "#/$defs/evidenceReference"}
           }
         }

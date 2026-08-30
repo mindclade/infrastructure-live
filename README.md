@@ -53,11 +53,30 @@ setting. Foundation, data-service, and cluster roots resolve their project or
 resource profile from the exact catalog environment; folder and billing
 binding, deletion protection, Cloud SQL HA/retention, and regional GKE zone
 minimums are provider preconditions. Data resources require a catalog data class, and bucket
-retention is enforced at that class's minimum. Restricted bucket retention is
-also irreversibly locked; enabling it requires explicit review because the lock
-cannot be removed or shortened. Centralized logs require delegated CMEK and at
+retention is enforced at that class's minimum. Restricted bucket activation and
+every irreversible retention-lock transition are intentionally unreachable:
+operator-authored catalog fields or receipts cannot prove independent approval.
+A future activation must first add a separately rooted cryptographic verifier.
+Centralized logs require delegated CMEK and at
 least 30 days retention in development, 90 in staging/production, and 365 in
 restricted.
+
+The production resource profile also owns the sole non-regional storage
+exception: a disabled CI-evidence archive in `NAM4`. Its exact Standard/default
+replication, software-CMEK, 2,555-day retention, 30-day soft-delete,
+versioning-disabled, and Archive lifecycle settings are catalog-controlled.
+The production artifacts root derives its bucket and key names from the bound
+target project. The target and identity projects, alert channels, inventory
+schedule, and reviewed audit-sink writer remain null or empty activation
+blockers in source. Once those authorities are bound, the target project's
+numeric project number derives the exact Storage and Storage Insights service
+agents, while the identity project derives only the named `ci-evidence-writer`
+and `ci-evidence-verifier` service accounts. Storage Data Access logs, a
+unique-writer audit sink, a mutation/denial alert, and daily object inventory
+activate with the archive. Retention remains unlocked. The module, schema, plan
+policy, and tests all reject a lock even when an operator supplies a perfectly
+formed receipt, because self-asserted evidence cannot authorize an irreversible
+provider mutation.
 
 The environment catalog is an activation authority, not descriptive metadata.
 Every module receives `enabled=false` unless both the root and its catalog
@@ -74,25 +93,42 @@ infractl catalog validate --root .
 infractl plan classify --input plan.json
 infractl policy verify --root .
 infractl drift classify --desired desired.json --observed observed.json
-infractl exports emit --environment development --stack foundation \
+infractl reconciliation verify --desired reviewed-state.json \
+  --observed refreshed-state.json
+infractl exports payload --environment development --stack foundation \
   --source-commit "$SOURCE_COMMIT" --plan-digest "$PLAN_DIGEST" \
+  --provider-lock-digest "$PROVIDER_LOCK_DIGEST" \
+  --backend-state-digest "$BACKEND_STATE_DIGEST" \
+  --backend-lineage "$BACKEND_LINEAGE" --backend-serial "$BACKEND_SERIAL" \
   --schema-digest "$SCHEMA_DIGEST" --generated-at "$EVIDENCE_TIME" \
-  --resources resources.json --signature-uri "$SIGNATURE_URI" \
-  --signature-digest "$SIGNATURE_DIGEST" \
+  --resources resources.json \
   --provenance-uri "$PROVENANCE_URI" \
-  --provenance-digest "$PROVENANCE_DIGEST" --output export.json
+  --provenance-digest "$PROVENANCE_DIGEST" --output export.payload.json
+# An independently controlled Ed25519 signer signs export.payload.json and
+# returns the canonical detached-signature JSON envelope.
+infractl exports emit <the-same-immutable-inputs> \
+  --signature "$DETACHED_SIGNATURE_JSON" \
+  --trusted-key-id "$BOOTSTRAP_EXPORT_SIGNER_KEY_ID" --output export.json
 ```
 
 The named environment variables above are required operator inputs and have no
 repository defaults. Validation errors return `1`.
-Plan deletion/replacement and detected drift return `2`. Output is canonical,
-machine-readable JSON and omits provider values. Export emission requires an
-explicit evidence timestamp and writes atomically with owner-only permissions.
+Plan deletion/replacement, detected drift, and a non-clean partial-apply
+reconciliation return `2`. Reconciliation compares exact transaction identity,
+backend lineage and serial, resource addresses, provider IDs, and redacted state
+digests; it always requires a new plan after an interrupted apply. Output is
+canonical, machine-readable JSON and omits provider values. Export emission
+requires an explicit evidence timestamp, transient provider-lock digest, exact
+backend state binding, an independently supplied trusted-key ID, and a detached Ed25519 signature that verifies over the
+canonical metadata, resources, provenance, plan digest, and source commit. It
+writes atomically with owner-only permissions.
 
 The export is the only supported infrastructure-to-GitOps interface. It
-contains resource URIs, never secret values or OpenTofu state. GitOps verifies
-its schema, signature, provenance, plan digest, source commit, and environment
-before use.
+contains resource URIs, never secret values or OpenTofu state. The embedded
+public key proves cryptographic consistency; GitOps must additionally bind its
+key ID to the independently governed bootstrap signing root before it verifies
+schema, signature, provenance, plan, source commit, provider lock, backend state,
+and environment. Source alone does not manufacture that trust binding.
 
 ## Local verification
 
@@ -123,6 +159,15 @@ forces locks.
 
 ## Protected plans and applies
 
+`CODEOWNERS` routes every source path to platform-operations and Security but is
+not the cumulative approval authority. The `github-config` catalog owns the no-bypass
+`infrastructure-source` ruleset: it requires two distinct approvals, code-owner
+review, last-push approval, resolved review threads, merge queue, and the exact
+`Pull request / required` check from `.github/workflows/pull-request.yml`.
+The Security team and its enforceable review path remain connected-activation
+blockers until observed and qualified; declaring correct source ownership does
+not manufacture external approval.
+
 Pull requests and merge queues receive no cloud identity. Connected drift uses
 a read-only, exact-workflow Workload Identity Federation principal. A protected
 apply is manual-dispatch only from the exact `main` commit and requires:
@@ -133,19 +178,24 @@ apply is manual-dispatch only from the exact `main` commit and requires:
    matching the approved dispatch input;
 4. no delete or replacement action;
 5. policy and source validation;
-6. approval through the environment-specific protected gate
-   (`infrastructure-development-apply`, `infrastructure-staging-apply`,
-   `infrastructure-production-apply`, or `infrastructure-restricted-apply`); and
+6. plan approval through `trusted-build`, followed by a separate
+   `infrastructure-apply` approval after the redacted plan coordinates exist,
+   with the selected catalog environment still bound into source, state prefix,
+   qualification digests, identities, and receipt; and
 7. post-apply zero-drift verification and a retained redacted receipt.
 
 Plan and apply use separate identities. A plan, source test, artifact upload,
 or environment approval alone never authorizes mutation. Production and
 restricted changes remain manual and cannot be promoted by a scheduled job.
 The canonical digest removes only the top-level plan generation timestamp and
-JSON key order/whitespace; it covers every other plan field. The apply workflow
-recreates the plan against the exact approved source and current isolated state,
-compares that digest, and applies that same saved plan. A material configuration
-or state race therefore changes the digest or causes saved-plan apply to fail.
+JSON key order/whitespace; it covers every other plan field. The plan job creates
+one six-hour artifact containing only the binary saved plan, transient provider
+lock, and canonical bundle manifest. The apply job downloads that same-run
+artifact, checks every file digest, recreates the provider installation with the
+lock in read-only mode, and requires current backend lineage, serial, and
+canonical state digest to equal the pre-plan snapshot before it applies the saved
+plan. A material configuration, provider, or state race therefore fails before
+mutation.
 
 Two protected qualification digests bind externally approved authority to the
 exact recreated plan. The IAM preimage is canonical compact JSON containing the
@@ -162,43 +212,55 @@ receipt. This environment-and-stack binding prevents a qualified list from
 being replayed into another authority boundary.
 
 The receipt is a redacted locator bound to source, environment, stack, plan,
-classification, policy, IAM-qualification and resource-reference digests, plus
-the workflow run. It contains no credentials, state, plans, provider values, or
-reviewer identities. The protected GitHub environment and workflow run record,
+saved-plan, transient provider-lock, pre/post backend serial and state digests,
+classification, policy, IAM-qualification and resource-reference digests, both
+identity-binding names, and the workflow run. It contains no credentials,
+state, plans, provider values, or reviewer identities. The protected GitHub environment and workflow run record,
 not the receipt by itself, are authoritative for identity bindings, approval,
 and retention.
 
 The repository-wide activation flag is `INFRASTRUCTURE_CONNECTED_READY`.
-Read-only drift identities and state bindings live in
-`infrastructure-development-plan`, `infrastructure-staging-plan`,
-`infrastructure-production-plan`, and `infrastructure-restricted-plan`.
-Mutation identities and state bindings live separately in the corresponding
-`infrastructure-development-apply`, `infrastructure-staging-apply`,
-`infrastructure-production-apply`, and `infrastructure-restricted-apply`
-gates. Those environments provide the variables appropriate to their role:
+Read-only drift identity and state bindings live in the canonical
+`trusted-build` governance environment. The distinct mutation identity and
+state bindings live in `infrastructure-apply`. Those two catalog-owned
+environments provide the variables appropriate to their role:
 
 - `INFRASTRUCTURE_STATE_BUCKET` and `INFRASTRUCTURE_STATE_PREFIX`;
-- `GCP_WIF_PROVIDER_INFRASTRUCTURE_PLAN` and
-  `GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_PLAN`; and
-- `GCP_WIF_PROVIDER_INFRASTRUCTURE_APPLY` and
-  `GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_APPLY`.
+- `GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_<ENVIRONMENT>_PLAN` and
+  `GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_<ENVIRONMENT>_PLAN` in
+  `trusted-build`; and
+- `GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_<ENVIRONMENT>_APPLY` and
+  `GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_<ENVIRONMENT>_APPLY` in
+  `infrastructure-apply`.
 
-They must be configured by the appropriate authority. This source cannot prove
-that the external gates, reviewers, or bindings exist, so connected readiness
-remains blocking until each environment is qualified. Static service-account
-keys are prohibited. Workflows fail closed if a required value is absent.
+`<ENVIRONMENT>` is `DEVELOPMENT`, `STAGING`, `PRODUCTION`, or `RESTRICTED`.
+Provider IDs end in the corresponding `<environment>-plan` or
+`<environment>-apply`, service accounts use the same local part, and each auth
+exchange requires the exact audience
+`https://github.mindclade.io/oidc/infrastructure-live/<environment>/<phase>`.
+These bindings match the eight unique `github-config` authority IDs
+`infrastructure-live-<environment>-<phase>`; a shared audience or identity is
+rejected.
+
+They must be configured by the appropriate authority for every selected catalog
+environment and state prefix. This source cannot prove that the external gates,
+reviewers, or bindings exist, so connected readiness remains blocking until
+both governance environments and every environment-specific resource binding
+are qualified. Static service-account keys are prohibited. Workflows fail
+closed if a required value is absent.
 
 The qualitative catalog `costGuardrail` selects an externally qualified budget
 control; financial amounts and notification bindings are intentionally not
-invented in source. Every environment apply gate must set
+invented in source. The `infrastructure-apply` gate must set
 `INFRASTRUCTURE_FINOPS_BUDGET_READY=true` only after its budget, thresholds, and
 alert recipients are independently verified. Protected apply blocks otherwise.
 
 Shared VPC service-project numbers and their Google-managed GKE service-agent
-principals are live bindings and are not guessed here. Each apply gate must set
+principals are live bindings and are not guessed here. The
+`infrastructure-apply` gate must set
 `INFRASTRUCTURE_SHARED_VPC_GKE_IAM_READY=true` only after host-subnet Network
 User access and the required service-agent roles have been reviewed and verified
-for that exact environment; protected apply blocks otherwise.
+for the exact selected environment; protected apply blocks otherwise.
 
 External and newly delegated CMEKs also depend on exact Google-managed service
 agents, including the GKE service agent for application-layer secrets
@@ -212,8 +274,8 @@ evaluation mode alone is not treated as supply-chain qualification.
 
 Each service-capability catalog entry is also an activation authority for its
 required Google APIs. Because stack projects can differ and source contains no
-live project identifiers, each protected environment must qualify the selected
-stack's exact API set and set its corresponding
+live project identifiers, the protected apply environment must qualify the
+selected stack's exact API set and set its corresponding
 `INFRASTRUCTURE_REQUIRED_APIS_<STACK>_READY=true` gate variable (`DATA_SERVICES`
 and `CI_EXECUTION` use underscores). The workflow selects the variable from the
 dispatch stack and fails closed; an empty foundation `services` set is never
@@ -248,8 +310,10 @@ which creates no IAM grant and exposes the provider-issued identities in the
 stack output. A follow-up change returns to the default `enforce` mode, records
 one identity per exact source project in `sink_writer_identities` and
 `approved_iam_principals`, and grants access only after an OpenTofu precondition
-matches that input to the provider value. Unknown computed IAM members remain
-policy violations; discovery is never authorization to grant one.
+matches that input to both a plan-time read of the previously created sink and
+the current managed provider value. Enforcement fails during planning when the
+sink does not already exist. Unknown computed IAM members remain policy
+violations; discovery is never authorization to grant one.
 
 Buildkite execution uses a checksum-reviewed immutable COS boot image and a
 startup script, not the retired container-declaration mechanism. The exact
@@ -277,10 +341,13 @@ is never assumed.
 
 ## Recovery and security
 
-The disaster-recovery workflow verifies source and recovery contracts only; it
-does not restore data or mutate resources. Database, artifact, state, network,
-cluster, and regional recovery require their runbook, live evidence, a reviewed
-change, and the same protected authority used for the affected resource.
+The disaster-recovery workflow's scheduled and default path verifies source and
+recovery contracts only. A separate manual, environment-approved CI-evidence
+job may read one generation-qualified object and test its effective permissions
+without mutation after activation; it is disabled by default and is not a
+restore. Database, artifact, state, network, cluster, and regional recovery
+require their runbook, live evidence, a reviewed change, and the same protected
+authority used for the affected resource.
 
 The contents are proprietary and confidential under [LICENSE](LICENSE).
 Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md),

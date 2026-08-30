@@ -56,8 +56,7 @@ deny contains message if {
 	after := object.get(change.change, "after", {})
 	object.get(after, "direction", "") == "EGRESS"
 	count(object.get(after, "allow", [])) > 0
-	some cidr in object.get(after, "destination_ranges", [])
-	endswith(cidr, "/0")
+	default_route_covered(object.get(after, "destination_ranges", []))
 	message := sprintf("%s: default-route egress allow rules are prohibited", [change.address])
 }
 
@@ -103,6 +102,12 @@ default_deny(after) if {
 	count(deny_rules) == 1
 	object.get(deny_rules[0], "protocol", "") == "all"
 	count(object.get(after, "log_config", [])) == 1
+}
+
+default_route_covered(ranges) if {
+	merged := net.cidr_merge(ranges)
+	some default_route in {"0.0.0.0/0", "::/0"}
+	default_route in merged
 }
 
 mutates(actions) if {

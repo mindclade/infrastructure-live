@@ -1,15 +1,17 @@
-# Infrastructure authority requires infrastructure and security review.
-* @mindclade/infrastructure @mindclade/security
+# Cloud Platform implementation authority is represented by platform-operations;
+# Security is an explicit co-owner for IAM, network, encryption, audit, restricted
+# profiles, workflows, policy, and every source path capable of changing them.
+* @mindclade/platform-operations @mindclade/security
 
-/.github/ @mindclade/infrastructure @mindclade/security
-/catalog/ @mindclade/infrastructure @mindclade/platform
-/schemas/ @mindclade/platform @mindclade/security
-/opentofu/ @mindclade/infrastructure @mindclade/security
-/policy/ @mindclade/security @mindclade/infrastructure
-/tests/ @mindclade/infrastructure @mindclade/platform
-/tooling/ @mindclade/platform @mindclade/infrastructure
-/runbooks/ @mindclade/infrastructure @mindclade/security
-/BUILD.bazel @mindclade/platform @mindclade/infrastructure
-/MODULE.bazel @mindclade/platform @mindclade/infrastructure
-/component.yaml @mindclade/platform @mindclade/infrastructure
-/SECURITY.md @mindclade/security
+/.github/ @mindclade/platform-operations @mindclade/security
+/catalog/ @mindclade/platform-operations @mindclade/security
+/schemas/ @mindclade/platform-operations @mindclade/security
+/opentofu/ @mindclade/platform-operations @mindclade/security
+/policy/ @mindclade/platform-operations @mindclade/security
+/tests/ @mindclade/platform-operations @mindclade/security
+/tooling/ @mindclade/platform-operations @mindclade/security
+/runbooks/ @mindclade/platform-operations @mindclade/security
+/BUILD.bazel @mindclade/platform-operations @mindclade/security
+/MODULE.bazel @mindclade/platform-operations @mindclade/security
+/component.yaml @mindclade/platform-operations @mindclade/security
+/SECURITY.md @mindclade/platform-operations @mindclade/security

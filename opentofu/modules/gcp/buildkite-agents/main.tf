@@ -146,7 +146,6 @@ resource "google_compute_region_instance_group_manager" "agent" {
   name               = var.name
   region             = var.region
   base_instance_name = var.name
-  target_size        = var.min_replicas
 
   version { instance_template = google_compute_instance_template.agent[0].id }
 

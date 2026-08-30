@@ -1,6 +1,6 @@
 # Infrastructure apply failure
 
-Owner: `@mindclade/infrastructure`
+Owner: `@mindclade/platform-operations`
 Security escalation: `@mindclade/security`
 
 Use this procedure when the protected apply workflow exits after state was
@@ -29,6 +29,15 @@ change cloud resources manually.
   lock may represent an active or interrupted operation; do not force it.
 - Run a fresh, read-only plan with locking enabled and classify its actions with
   `infractl plan classify`. Store only redacted action evidence.
+- Construct reviewed and refreshed
+  `infrastructure.mindclade.dev/partial-apply-reconciliation/v1` documents from
+  the protected pre-apply receipt and authorized provider/state observation.
+  Bind the exact root, source commit, plan digest, operation ID, backend lineage,
+  backend serial, resource addresses, provider IDs, and redacted state digests; then
+  run `infractl reconciliation verify --desired reviewed.json --observed
+  refreshed.json`. A lineage change, transaction mismatch, serial regression,
+  or advance beyond one interrupted apply is an ambiguity and fails before
+  classification.
 - Compare provider audit events with workflow timestamps and distinguish
   desired changes, partial changes, external drift, and read failures.
 
@@ -38,7 +47,9 @@ change cloud resources manually.
   pull request and obtain a new reviewed plan.
 - If a partial mutation occurred, prefer a reviewed forward correction that
   converges to the declared source. Do not replay the old plan after state or
-  provider state has changed.
+  provider state has changed. Even a clean structured reconciliation emits
+  `resumeAllowed=false`; refresh/import/compare as required, create a new plan,
+  and derive it from the observed state.
 - If recovery requires import, state movement, backend migration, force-unlock,
   deletion, or replacement, stop. Create a separate change record with exact
   addresses, dependency order, backup evidence, rollback, and independent

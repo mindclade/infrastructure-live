@@ -50,7 +50,7 @@ allowed_iam_roles_by_type := {
 	"google_pubsub_topic_iam_member": {"roles/pubsub.publisher"},
 	"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor"},
 	"google_service_account_iam_member": {"roles/iam.workloadIdentityUser"},
-	"google_storage_bucket_iam_member": {"roles/storage.objectCreator", "roles/storage.objectViewer"},
+	"google_storage_bucket_iam_member": {"roles/storage.insightsCollectorService", "roles/storage.objectCreator", "roles/storage.objectViewer"},
 }
 
 regional_field_by_type := {
@@ -68,6 +68,7 @@ regional_field_by_type := {
 	"google_logging_project_bucket_config": "location",
 	"google_sql_database_instance": "region",
 	"google_storage_bucket": "location",
+	"google_storage_insights_report_config": "location",
 }
 
 direct_reference_fields_by_type := {
@@ -148,7 +149,88 @@ deny contains message if {
 	mutates(change.change.actions)
 	contains(change.type, "_iam_")
 	not change.type in governed_iam_member_types
+	change.type != "google_project_iam_audit_config"
 	message := sprintf("%s: IAM binding and policy resources outside the explicit member-resource contract are prohibited", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_archive_iam_member(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_archive_iam_member(after)
+	message := sprintf("%s: CI evidence IAM must preserve the exact writer, verifier, service-agent role separation", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_archive_kms_member(change)
+	after := object.get(change.change, "after", {})
+	object.get(after, "role", "") != "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+	message := sprintf("%s: the archive CMEK role must remain encrypter/decrypter", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_archive_kms_member(change)
+	after := object.get(change.change, "after", {})
+	object.get(after, "member", "") != object.get(root_ci_evidence_archive, "storage_service_agent", "")
+	message := sprintf("%s: the archive CMEK principal must be the exact target-project Storage service agent", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	change.type == "google_project_iam_audit_config"
+	not ci_evidence_storage_audit_config(change)
+	message := sprintf("%s: project audit configuration is allowed only for the governed CI evidence archive", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_storage_audit_config(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_storage_audit_config(after)
+	message := sprintf("%s: archive audit configuration must enable exact Storage DATA_READ and DATA_WRITE logs without exemptions", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_audit_sink(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_audit_sink(after)
+	message := sprintf("%s: archive audit sink must route exact activity and Data Access logs to the evidence bucket with a unique writer", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_audit_metric(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_audit_metric(after)
+	message := sprintf("%s: archive audit metric must detect policy mutation, deletion, and denied access", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_audit_alert(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_audit_alert(after)
+	message := sprintf("%s: archive security alert must be enabled and deliver to at least one exact channel", [change.address])
+}
+
+deny contains message if {
+	some change in input.resource_changes
+	mutates(change.change.actions)
+	ci_evidence_inventory(change)
+	after := object.get(change.change, "after", {})
+	not valid_ci_evidence_inventory(after)
+	message := sprintf("%s: archive inventory must be daily, deletion-protected, and generation-aware in the evidence bucket", [change.address])
 }
 
 deny contains message if {
@@ -167,9 +249,9 @@ deny contains message if {
 	field := regional_field_by_type[change.type]
 	after := object.get(change.change, "after", {})
 	actual := object.get(after, field, null)
-	expected := root_primary_location
+	expected := expected_location(change)
 	not same_location(actual, expected)
-	message := sprintf("%s: %s location %v must match catalog primary location %v", [change.address, field, actual, expected])
+	message := sprintf("%s: %s location %v must match its catalog-authorized location %v", [change.address, field, actual, expected])
 }
 
 deny contains message if {
@@ -428,6 +510,162 @@ first(values) := values[0] if { count(values) > 0 }
 first(values) := {} if { count(values) == 0 }
 
 root_primary_location := object.get(object.get(object.get(object.get(object.get(input, "planned_values", {}), "outputs", {}), "region_authority", {}), "value", {}), "primary_location", null)
+
+root_ci_evidence_archive := object.get(object.get(object.get(object.get(object.get(input, "planned_values", {}), "outputs", {}), "region_authority", {}), "value", {}), "ci_evidence_archive", {})
+
+ci_evidence_archive_iam_member(change) if {
+	change.type == "google_storage_bucket_iam_member"
+	startswith(change.address, "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket_iam_member.access[")
+}
+
+ci_evidence_archive_kms_member(change) if {
+	change.type == "google_kms_crypto_key_iam_member"
+	startswith(change.address, "module.stack.module.ci_evidence_archive_kms.google_kms_crypto_key_iam_member.encrypter_decrypter[")
+}
+
+valid_ci_evidence_archive_iam_member(after) if {
+	object.get(after, "role", "") == "roles/storage.objectViewer"
+	object.get(after, "member", "") == object.get(root_ci_evidence_archive, "verifier_principal", "")
+}
+
+valid_ci_evidence_archive_iam_member(after) if {
+	object.get(after, "role", "") == "roles/storage.insightsCollectorService"
+	object.get(after, "member", "") == object.get(root_ci_evidence_archive, "storage_insights_agent", "")
+}
+
+valid_ci_evidence_archive_iam_member(after) if {
+	object.get(after, "role", "") == "roles/storage.objectCreator"
+	member := object.get(after, "member", "")
+	member == object.get(root_ci_evidence_archive, "writer_principal", "")
+}
+
+valid_ci_evidence_archive_iam_member(after) if {
+	object.get(after, "role", "") == "roles/storage.objectCreator"
+	member := object.get(after, "member", "")
+	member == object.get(root_ci_evidence_archive, "storage_insights_agent", "")
+}
+
+valid_ci_evidence_archive_iam_member(after) if {
+	object.get(after, "role", "") == "roles/storage.objectCreator"
+	object.get(root_ci_evidence_archive, "audit_sink_binding_mode", "") == "enforce"
+	member := object.get(after, "member", "")
+	member == object.get(root_ci_evidence_archive, "audit_sink_writer_identity", "")
+}
+
+ci_evidence_storage_audit_config(change) if {
+	change.type == "google_project_iam_audit_config"
+	startswith(change.address, "module.stack.google_project_iam_audit_config.ci_evidence_storage[")
+}
+
+valid_ci_evidence_storage_audit_config(after) if {
+	object.get(after, "project", "") == object.get(root_ci_evidence_archive, "project_id", "")
+	object.get(after, "service", "") == "storage.googleapis.com"
+	configs := object.get(after, "audit_log_config", [])
+	count(configs) == 2
+	types := {object.get(config, "log_type", "") | some config in configs}
+	types == {"DATA_READ", "DATA_WRITE"}
+	every config in configs {
+		count(object.get(config, "exempted_members", [])) == 0
+	}
+}
+
+ci_evidence_audit_sink(change) if {
+	change.type == "google_logging_project_sink"
+	startswith(change.address, "module.stack.google_logging_project_sink.ci_evidence_audit[")
+}
+
+valid_ci_evidence_audit_sink(after) if {
+	project := object.get(root_ci_evidence_archive, "project_id", "")
+	bucket := object.get(root_ci_evidence_archive, "bucket_name", "")
+	object.get(after, "project", "") == project
+	object.get(after, "name", "") == "mindclade-ci-evidence-audit"
+	object.get(after, "destination", "") == sprintf("storage.googleapis.com/%s", [bucket])
+	object.get(after, "unique_writer_identity", false)
+	filter := object.get(after, "filter", "")
+	contains(filter, sprintf("resource.labels.bucket_name=\"%s\"", [bucket]))
+	contains(filter, "cloudaudit.googleapis.com/activity")
+	contains(filter, "cloudaudit.googleapis.com/data_access")
+}
+
+ci_evidence_audit_metric(change) if {
+	change.type == "google_logging_metric"
+	startswith(change.address, "module.stack.google_logging_metric.ci_evidence_security_event[")
+}
+
+valid_ci_evidence_audit_metric(after) if {
+	object.get(after, "project", "") == object.get(root_ci_evidence_archive, "project_id", "")
+	object.get(after, "name", "") == "ci_evidence_archive_security_event"
+	filter := object.get(after, "filter", "")
+	contains(filter, "storage\\.(buckets\\.(delete|lockRetentionPolicy|setIamPolicy|update)|objects\\.delete)")
+	contains(filter, "protoPayload.status.code!=0")
+}
+
+ci_evidence_audit_alert(change) if {
+	change.type == "google_monitoring_alert_policy"
+	startswith(change.address, "module.stack.google_monitoring_alert_policy.ci_evidence_security_event[")
+}
+
+valid_ci_evidence_audit_alert(after) if {
+	object.get(after, "project", "") == object.get(root_ci_evidence_archive, "project_id", "")
+	object.get(after, "enabled", false)
+	count(object.get(after, "notification_channels", [])) > 0
+	count(object.get(after, "conditions", [])) == 1
+}
+
+ci_evidence_inventory(change) if {
+	change.type == "google_storage_insights_report_config"
+	startswith(change.address, "module.stack.google_storage_insights_report_config.ci_evidence_inventory[")
+}
+
+valid_ci_evidence_inventory(after) if {
+	bucket := object.get(root_ci_evidence_archive, "bucket_name", "")
+	object.get(after, "project", "") == object.get(root_ci_evidence_archive, "project_id", "")
+	object.get(after, "location", "") == object.get(root_ci_evidence_archive, "location", "")
+	object.get(after, "deletion_policy", "") == "PREVENT"
+	object.get(after, "force_destroy", true) == false
+	frequency := first(object.get(after, "frequency_options", []))
+	object.get(frequency, "frequency", "") == "DAILY"
+	metadata := first(object.get(after, "object_metadata_report_options", []))
+	filters := first(object.get(metadata, "storage_filters", []))
+	destination := first(object.get(metadata, "storage_destination_options", []))
+	object.get(filters, "bucket", "") == bucket
+	object.get(destination, "bucket", "") == bucket
+	object.get(destination, "destination_path", "") == "inventory/"
+	fields := object.get(metadata, "metadata_fields", [])
+	"crc32c" in fields
+	"name" in fields
+	"retentionExpirationTime" in fields
+	"size" in fields
+}
+
+expected_location(change) := object.get(root_ci_evidence_archive, "location", null) if {
+	object.get(root_ci_evidence_archive, "enabled", false)
+	ci_evidence_archive_resource(change)
+}
+
+expected_location(change) := root_primary_location if {
+	not ci_evidence_archive_override(change)
+}
+
+ci_evidence_archive_override(change) if {
+	object.get(root_ci_evidence_archive, "enabled", false)
+	ci_evidence_archive_resource(change)
+}
+
+ci_evidence_archive_resource(change) if {
+	change.type == "google_storage_bucket"
+	startswith(change.address, "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[")
+}
+
+ci_evidence_archive_resource(change) if {
+	change.type == "google_storage_insights_report_config"
+	startswith(change.address, "module.stack.google_storage_insights_report_config.ci_evidence_inventory[")
+}
+
+ci_evidence_archive_resource(change) if {
+	change.type == "google_kms_key_ring"
+	startswith(change.address, "module.stack.module.ci_evidence_archive_kms.google_kms_key_ring.this[")
+}
 
 same_location(actual, expected) if {
 	is_string(actual)

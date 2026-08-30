@@ -1,6 +1,6 @@
 # Network isolation failure
 
-Owner: `@mindclade/infrastructure`
+Owner: `@mindclade/platform-operations`
 Security escalation: `@mindclade/security`
 
 Use this procedure for unexpected reachability, loss of required private

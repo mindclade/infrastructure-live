@@ -11,6 +11,21 @@ name: disaster-recovery
         default: all
         type: choice
         options: [all, database, artifacts, network, cluster, regional]
+      connected_ci_evidence_verification:
+        description: Opt in to the approved read-only CI-evidence generation check
+        required: true
+        default: false
+        type: boolean
+      ci_evidence_object_uri:
+        description: Exact generation-qualified gs:// CI-evidence object URI
+        required: false
+        default: ""
+        type: string
+      ci_evidence_digest:
+        description: Expected sha256-prefixed digest of canonical CI-evidence JSON
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -71,25 +86,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          verify_scope() {
+            case "$1" in
+              database)
+                python3 tests/recovery/test_database_restore.py
+                ;;
+              artifacts)
+                python3 tests/recovery/test_artifact_restore.py
+                ;;
+              network)
+                python3 tests/security/test_cross_environment_denial.py
+                ;;
+              cluster)
+                python3 tests/plan/test_production_plan.py
+                ;;
+              regional)
+                python3 tests/failure/test_partial_apply_reconciliation.py
+                ;;
+              *)
+                printf '::error::Unsupported recovery scope: %s\n' "$1"
+                return 1
+                ;;
+            esac
+          }
           case "${RECOVERY_SCOPE}" in
             all)
-              python3 tests/recovery/test_database_restore.py
-              python3 tests/recovery/test_artifact_restore.py
+              for scope in database artifacts network cluster regional; do
+                verify_scope "${scope}"
+              done
               ;;
-            database)
-              python3 tests/recovery/test_database_restore.py
+            database|artifacts|network|cluster|regional)
+              verify_scope "${RECOVERY_SCOPE}"
               ;;
-            artifacts)
-              python3 tests/recovery/test_artifact_restore.py
-              ;;
-            network)
-              test -s runbooks/network-isolation-failure.md
-              ;;
-            cluster)
-              test -s runbooks/cluster-control-plane-failure.md
-              ;;
-            regional)
-              test -s runbooks/regional-recovery.md
+            *)
+              verify_scope "${RECOVERY_SCOPE}"
               ;;
           esac
 
@@ -107,7 +137,7 @@ jobs:
             --arg result "source-contract-passed" \
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
-            '{apiVersion: $apiVersion, scope: $scope, sourceCommit: $sourceCommit, sourceTree: $sourceTree, result: $result, runId: $runId, runAttempt: $runAttempt, connectedQualification: false, mutationPerformed: false}' \
+            '{apiVersion: $apiVersion, scope: $scope, sourceCommit: $sourceCommit, sourceTree: $sourceTree, result: $result, runId: $runId, runAttempt: $runAttempt, connectedQualification: false, mutationPerformed: false, ciEvidenceArchive: {sourceContractVerified: ($scope == "all" or $scope == "artifacts"), connectedQualification: false, connectedReadPerformed: false, retentionLockPerformed: false}}' \
             >"${RUNNER_TEMP}/recovery.verification.json"
 
       - name: Retain the redacted source verification
@@ -115,5 +145,148 @@ jobs:
         with:
           name: recovery-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/recovery.verification.json
+          if-no-files-found: error
+          retention-days: 90
+
+  verify-ci-evidence-connected:
+    name: connected-ci-evidence-generation-verification
+    needs: verify
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.connected_ci_evidence_verification == true &&
+      (inputs.scope == 'all' || inputs.scope == 'artifacts') &&
+      github.ref == 'refs/heads/main' &&
+      needs.verify.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: infrastructure-apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CI_EVIDENCE_OBJECT_URI: ${{ inputs.ci_evidence_object_uri }}
+      CI_EVIDENCE_DIGEST: ${{ inputs.ci_evidence_digest }}
+      CI_EVIDENCE_BUCKET: ${{ vars.CI_EVIDENCE_ARCHIVE_BUCKET }}
+      WIF_PROVIDER: ${{ vars.CI_EVIDENCE_VERIFIER_WIF_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ vars.CI_EVIDENCE_VERIFIER_SERVICE_ACCOUNT }}
+    steps:
+      - name: Validate connected-verifier activation contract
+        id: activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "mindclade/infrastructure-live" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]
+          [[ "${WIF_PROVIDER}" =~ ^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/github-ci-evidence/providers/verifier$ ]]
+          [[ "${WIF_SERVICE_ACCOUNT}" =~ ^ci-evidence-verifier@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]]
+          [[ "${CI_EVIDENCE_BUCKET}" =~ ^[a-z0-9][a-z0-9.-]{1,220}[a-z0-9]$ ]]
+          [[ "${CI_EVIDENCE_BUCKET}" == *-production-ci-evidence ]]
+          [[ "${CI_EVIDENCE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          object_pattern='^gs://([a-z0-9][a-z0-9.-]{1,220}[a-z0-9])/ci-evidence/v1/mindclade/(\.github|bootstrap|github-config|gitops|infrastructure-live|mindclade-internal-monorepo)/([0-9a-f]{40})/([1-9][0-9]*)/([1-9][0-9]*)/([1-9][0-9]*)/ci-evidence\.json#([1-9][0-9]*)$'
+          [[ "${CI_EVIDENCE_OBJECT_URI}" =~ ${object_pattern} ]]
+          [[ "${BASH_REMATCH[1]}" == "${CI_EVIDENCE_BUCKET}" ]]
+          printf 'source_revision=%s\ngeneration=%s\n' \
+            "${BASH_REMATCH[3]}" "${BASH_REMATCH[7]}" >>"${GITHUB_OUTPUT}"
+
+      - name: Check out the pinned verifier source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Authenticate the dedicated read-only evidence verifier
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Install pinned Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: "568.0.0"
+
+      - name: Read and verify only the selected object generation
+        id: verify-object
+        shell: bash
+        env:
+          EXPECTED_GENERATION: ${{ steps.activation.outputs.generation }}
+          EXPECTED_SOURCE_REVISION: ${{ steps.activation.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_file="${RUNNER_TEMP}/ci-evidence.json"
+          metadata_file="${RUNNER_TEMP}/ci-evidence.metadata.json"
+          permissions_file="${RUNNER_TEMP}/ci-evidence.permissions.json"
+          verification_file="${RUNNER_TEMP}/ci-evidence.connected-verification.json"
+          cleanup() {
+            rm -f "${evidence_file}" "${metadata_file}" "${permissions_file}"
+          }
+          trap cleanup EXIT
+
+          gcloud storage objects describe "${CI_EVIDENCE_OBJECT_URI}" \
+            --format=json >"${metadata_file}"
+          observed_generation="$(jq -er '.generation | tostring' "${metadata_file}")"
+          [[ "${observed_generation}" == "${EXPECTED_GENERATION}" ]]
+          gcloud storage cp "${CI_EVIDENCE_OBJECT_URI}" "${evidence_file}" --quiet
+          observed_digest="$(python3 - "${evidence_file}" "${EXPECTED_SOURCE_REVISION}" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          revision = sys.argv[2]
+          document = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(document, dict) or document.get("source_revision") != revision:
+              raise SystemExit("CI-evidence source revision mismatch")
+          canonical = json.dumps(
+              document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+          ).encode("utf-8")
+          print("sha256:" + hashlib.sha256(canonical).hexdigest())
+          PY
+          )"
+          [[ "${observed_digest}" == "${CI_EVIDENCE_DIGEST}" ]]
+
+          allowed_permissions_json='["storage.objects.get","storage.objects.list"]'
+          denied_permissions_json='["storage.buckets.delete","storage.buckets.enableObjectRetention","storage.buckets.getIamPolicy","storage.buckets.relocate","storage.buckets.restore","storage.buckets.setIamPolicy","storage.buckets.setIpFilter","storage.buckets.update","storage.folders.create","storage.folders.delete","storage.folders.rename","storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.getIamPolicy","storage.managedFolders.setIamPolicy","storage.multipartUploads.abort","storage.multipartUploads.create","storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.getIamPolicy","storage.objects.move","storage.objects.overrideUnlockedRetention","storage.objects.restore","storage.objects.setIamPolicy","storage.objects.setRetention","storage.objects.update","storage.objects.updateContext"]'
+          permission_url="https://storage.googleapis.com/storage/v1/b/${CI_EVIDENCE_BUCKET}/iam/testPermissions?"
+          while IFS= read -r permission; do
+            permission_url+="permissions=${permission}&"
+          done < <(jq -r '.[]' <<<"${allowed_permissions_json}"; jq -r '.[]' <<<"${denied_permissions_json}")
+          permission_url="${permission_url%&}"
+          access_token="$(gcloud auth print-access-token)"
+          {
+            printf 'header = "Authorization: Bearer %s"\n' "${access_token}"
+            printf 'url = "%s"\n' "${permission_url}"
+          } | curl --config - --fail --silent --show-error --proto '=https' \
+            --tlsv1.2 --output "${permissions_file}"
+          unset access_token
+          granted_permissions="$(jq -cer '(.permissions // []) | sort' "${permissions_file}")"
+          [[ "${granted_permissions}" == "${allowed_permissions_json}" ]]
+
+          object_reference_sha256="$(printf '%s' "${CI_EVIDENCE_OBJECT_URI}" | sha256sum | awk '{print $1}')"
+          jq -n \
+            --arg apiVersion "infrastructure.mindclade.dev/ci-evidence-recovery-verification/v1" \
+            --arg sourceCommit "${GITHUB_SHA}" \
+            --arg evidenceSourceRevision "${EXPECTED_SOURCE_REVISION}" \
+            --arg objectReferenceSha256 "${object_reference_sha256}" \
+            --arg objectGeneration "${EXPECTED_GENERATION}" \
+            --arg evidenceDigest "${observed_digest}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --argjson allowedPermissions "${allowed_permissions_json}" \
+            --argjson deniedPermissions "${denied_permissions_json}" \
+            '{apiVersion: $apiVersion, sourceCommit: $sourceCommit, evidenceSourceRevision: $evidenceSourceRevision, objectReferenceSha256: $objectReferenceSha256, objectGeneration: $objectGeneration, evidenceDigest: $evidenceDigest, runId: $runId, runAttempt: $runAttempt, result: "exact-generation-digest-verified", connectedQualification: true, connectedReadPerformed: true, mutationPerformed: false, retentionLockPerformed: false, authorizationMatrix: {allowed: $allowedPermissions, denied: $deniedPermissions}}' \
+            >"${verification_file}"
+          printf 'verification_file=%s\n' "${verification_file}" >>"${GITHUB_OUTPUT}"
+
+      - name: Retain the redacted connected verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-evidence-connected-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.verify-object.outputs.verification_file }}
           if-no-files-found: error
           retention-days: 90

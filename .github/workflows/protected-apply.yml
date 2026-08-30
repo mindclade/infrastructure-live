@@ -38,6 +38,8 @@ env:
   GO_LINUX_AMD64_SHA256: 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
   TOFU_VERSION: "1.12.2"
   TOFU_LINUX_AMD64_SHA256: dc0ad16a42b3bfb5f3ceff3dcd5e9cd4c55271fae9f4bfe611749ff8ae6ec23c
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
 
 jobs:
   preflight:
@@ -61,12 +63,12 @@ jobs:
           [[ "${PLAN_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${CHANGE_REFERENCE}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$ ]]
 
-  apply:
-    name: reviewed-saved-plan
+  plan:
+    name: reviewed-plan
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: infrastructure-${{ inputs.environment }}-apply
+    environment: trusted-build
     permissions:
       contents: read
       id-token: write
@@ -78,10 +80,9 @@ jobs:
       CHANGE_REFERENCE: ${{ inputs.change_reference }}
       STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
       STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
-      PLAN_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_PLAN }}
-      PLAN_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_PLAN }}
-      APPLY_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_APPLY }}
-      APPLY_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_APPLY }}
+      PLAN_WIF_PROVIDER: ${{ inputs.environment == 'development' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_DEVELOPMENT_PLAN || inputs.environment == 'staging' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_STAGING_PLAN || inputs.environment == 'production' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_PRODUCTION_PLAN || vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_RESTRICTED_PLAN }}
+      PLAN_SERVICE_ACCOUNT: ${{ inputs.environment == 'development' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_DEVELOPMENT_PLAN || inputs.environment == 'staging' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_STAGING_PLAN || inputs.environment == 'production' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_PRODUCTION_PLAN || vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_RESTRICTED_PLAN }}
+      PLAN_OIDC_AUDIENCE: https://github.mindclade.io/oidc/infrastructure-live/${{ inputs.environment }}/plan
       FINOPS_BUDGET_READY: ${{ vars.INFRASTRUCTURE_FINOPS_BUDGET_READY }}
       SHARED_VPC_GKE_IAM_READY: ${{ vars.INFRASTRUCTURE_SHARED_VPC_GKE_IAM_READY }}
       BUILDKITE_IMAGE_CONTRACT_READY: ${{ vars.INFRASTRUCTURE_BUILDKITE_IMAGE_CONTRACT_READY }}
@@ -106,7 +107,7 @@ jobs:
       APIS_READY_CI_EXECUTION: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_CI_EXECUTION_READY }}
       APIS_READY_OBSERVABILITY: ${{ vars.INFRASTRUCTURE_REQUIRED_APIS_OBSERVABILITY_READY }}
     steps:
-      - name: Require environment-scoped state and identity bindings
+      - name: Select the exact environment plan authority
         shell: bash
         run: |
           set -euo pipefail
@@ -114,9 +115,17 @@ jobs:
           test -n "${STATE_PREFIX}"
           test -n "${PLAN_WIF_PROVIDER}"
           test -n "${PLAN_SERVICE_ACCOUNT}"
-          test -n "${APPLY_WIF_PROVIDER}"
-          test -n "${APPLY_SERVICE_ACCOUNT}"
-          test "${PLAN_SERVICE_ACCOUNT}" != "${APPLY_SERVICE_ACCOUNT}"
+          test "${PLAN_OIDC_AUDIENCE}" = "https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/plan"
+          [[ "${STATE_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
+          [[ "${STATE_PREFIX}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]]
+          [[ "${PLAN_WIF_PROVIDER}" =~ ^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/${ENVIRONMENT}-plan$ ]]
+          [[ "${PLAN_SERVICE_ACCOUNT}" =~ ^${ENVIRONMENT}-plan@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]]
+          printf 'PLAN_IDENTITY_BINDING=infrastructure-live-%s-plan\n' "${ENVIRONMENT}" >>"${GITHUB_ENV}"
+
+      - name: Require qualified plan inputs
+        shell: bash
+        run: |
+          set -euo pipefail
           test "${FINOPS_BUDGET_READY}" = "true"
           test "${SHARED_VPC_GKE_IAM_READY}" = "true"
           test "${BUILDKITE_IMAGE_CONTRACT_READY}" = "true"
@@ -145,59 +154,44 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install checksum-verified Go
+      - name: Install checksum-verified Go and OpenTofu
         shell: bash
         run: |
           set -euo pipefail
-          archive="${RUNNER_TEMP}/go.tar.gz"
           toolchains="${RUNNER_TEMP}/toolchains"
+          go_archive="${RUNNER_TEMP}/go.tar.gz"
+          tofu_archive="${RUNNER_TEMP}/tofu.zip"
+          tofu_bin="${RUNNER_TEMP}/tofu-bin"
+          mkdir -p "${toolchains}" "${tofu_bin}"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${archive}"
-          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
-          mkdir -p "${toolchains}"
-          tar -xzf "${archive}" -C "${toolchains}"
-          printf '%s\n' "${toolchains}/go/bin" >>"${GITHUB_PATH}"
-
-      - name: Install checksum-verified OpenTofu
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="${RUNNER_TEMP}/tofu.zip"
-          bin_dir="${RUNNER_TEMP}/tofu-bin"
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${go_archive}"
+          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${go_archive}" | sha256sum --check --strict
+          tar -xzf "${go_archive}" -C "${toolchains}"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
             "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
-            --output "${archive}"
-          printf '%s  %s\n' "${TOFU_LINUX_AMD64_SHA256}" "${archive}" | sha256sum --check --strict
-          mkdir -p "${bin_dir}"
-          unzip -q "${archive}" -d "${bin_dir}"
-          chmod 0755 "${bin_dir}/tofu"
-          printf '%s\n' "${bin_dir}" >>"${GITHUB_PATH}"
+            --output "${tofu_archive}"
+          printf '%s  %s\n' "${TOFU_LINUX_AMD64_SHA256}" "${tofu_archive}" | sha256sum --check --strict
+          unzip -q "${tofu_archive}" -d "${tofu_bin}"
+          chmod 0755 "${tofu_bin}/tofu"
+          printf '%s\n%s\n' "${toolchains}/go/bin" "${tofu_bin}" >>"${GITHUB_PATH}"
 
-      - name: Install pinned policy verifier
+      - name: Install pinned policy verifier and build the redacting classifier
+        shell: bash
         run: |
           set -euo pipefail
           go install github.com/open-policy-agent/conftest@v0.69.0
           printf '%s\n' "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
-
-      - name: Build the redacting classifier
-        run: |
-          set -euo pipefail
           umask 077
-          cd tooling
-          go build -trimpath -o "${RUNNER_TEMP}/infractl" ./cmd/infractl
-
-      - name: Revalidate catalog authority and live-root activation
-        shell: bash
-        run: |
-          set -euo pipefail
+          go -C tooling build -trimpath -o "${RUNNER_TEMP}/infractl" ./cmd/infractl
           "${RUNNER_TEMP}/infractl" catalog validate --root .
 
-      - name: Authenticate the read-only plan identity
+      - name: Authenticate the environment-specific read-only plan identity
         id: plan-auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ env.PLAN_WIF_PROVIDER }}
           service_account: ${{ env.PLAN_SERVICE_ACCOUNT }}
+          audience: ${{ env.PLAN_OIDC_AUDIENCE }}
           create_credentials_file: true
           export_environment_variables: true
 
@@ -208,45 +202,320 @@ jobs:
           umask 077
           unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
           root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          bundle="${RUNNER_TEMP}/plan-bundle"
+          saved_plan="${bundle}/reviewed.tfplan"
+          plan_json="${RUNNER_TEMP}/reviewed.plan.json"
+          plan_log="${RUNNER_TEMP}/reviewed.plan.log"
+          classification="${RUNNER_TEMP}/classification.json"
+          policy_result="${RUNNER_TEMP}/policy.json"
+          prior_state="${RUNNER_TEMP}/prior.state.json"
+          final_state="${RUNNER_TEMP}/final.state.json"
+          mkdir -m 0700 "${bundle}"
           export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
+          test ! -e "${root}/.terraform.lock.hcl"
           tofu -chdir="${root}" init -input=false \
             -backend-config="bucket=${STATE_BUCKET}" \
-            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}"
+            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}" \
+            >"${RUNNER_TEMP}/tofu-init.log" 2>&1
+          provider_lock="${root}/.terraform.lock.hcl"
+          test -f "${provider_lock}"
+          test ! -L "${provider_lock}"
+          cp "${provider_lock}" "${bundle}/provider.lock.hcl"
+          provider_lock_digest="sha256:$(sha256sum "${bundle}/provider.lock.hcl" | awk '{print $1}')"
+          tofu -chdir="${root}" state pull >"${prior_state}" 2>"${RUNNER_TEMP}/state-pull.log"
+          backend_serial="$(jq -er '.serial | numbers' "${prior_state}")"
+          backend_lineage="$(jq -er '.lineage | strings | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))' "${prior_state}")"
+          backend_state_digest="sha256:$(jq -cS . "${prior_state}" | sha256sum | awk '{print $1}')"
           set +e
           tofu -chdir="${root}" plan -input=false -lock-timeout=5m -detailed-exitcode \
-            -out="${RUNNER_TEMP}/reviewed.tfplan"
+            -out="${saved_plan}" >"${plan_log}" 2>&1
           plan_status="$?"
           set -e
-          test "${plan_status}" -eq 2
-          tofu -chdir="${root}" show -json "${RUNNER_TEMP}/reviewed.tfplan" >"${RUNNER_TEMP}/reviewed.plan.json"
+          if [[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]; then
+            printf '::error::OpenTofu plan failed with exit code %s; raw output is suppressed.\n' "${plan_status}"
+            exit 1
+          fi
+          tofu -chdir="${root}" show -json "${saved_plan}" >"${plan_json}" 2>>"${plan_log}"
+          set +e
+          conftest test "${plan_json}" --policy policy --all-namespaces --output json \
+            >"${policy_result}" 2>>"${plan_log}"
+          policy_status="$?"
+          set -e
+          if [[ "${policy_status}" -eq 1 ]]; then
+            printf '::error::The OpenTofu plan was denied by policy; detailed policy output is suppressed.\n'
+            exit 1
+          fi
+          if [[ "${policy_status}" -ne 0 ]] || ! jq -e . "${policy_result}" >/dev/null 2>>"${plan_log}"; then
+            printf '::error::OpenTofu plan policy evaluation failed; raw output is suppressed.\n'
+            exit 1
+          fi
+          if [[ "${plan_status}" -eq 0 ]]; then
+            printf '::error::The no-change plan passed policy evaluation, but protected apply requires a reviewed mutation; apply was skipped.\n'
+            exit 1
+          fi
           actual_iam_digest="sha256:$(
             jq -cS --arg environment "${ENVIRONMENT}" \
               '{environment: $environment, approvedIamPrincipals: (.variables.approved_iam_principals.value | sort)}' \
-              "${RUNNER_TEMP}/reviewed.plan.json" | tr -d '\n' | sha256sum | awk '{print $1}'
+              "${plan_json}" | tr -d '\n' | sha256sum | awk '{print $1}'
           )"
           test "${actual_iam_digest}" = "${IAM_PRINCIPALS_DIGEST}"
           actual_resource_digest="sha256:$(
             jq -cS --arg environment "${ENVIRONMENT}" --arg stack "${STACK}" \
               '{environment: $environment, stack: $stack, approvedResourceReferences: (.variables.approved_resource_references.value | sort)}' \
-              "${RUNNER_TEMP}/reviewed.plan.json" | tr -d '\n' | sha256sum | awk '{print $1}'
+              "${plan_json}" | tr -d '\n' | sha256sum | awk '{print $1}'
           )"
           test "${actual_resource_digest}" = "${EXPECTED_RESOURCE_REFERENCES_DIGEST}"
-          "${RUNNER_TEMP}/infractl" plan classify \
-            --input "${RUNNER_TEMP}/reviewed.plan.json" >"${RUNNER_TEMP}/classification.json"
-          actual_digest="$(jq -er '.digest' "${RUNNER_TEMP}/classification.json")"
+          "${RUNNER_TEMP}/infractl" plan classify --input "${plan_json}" >"${classification}" 2>>"${plan_log}"
+          actual_digest="$(jq -er '.digest' "${classification}")"
           test "${actual_digest}" = "${REVIEWED_PLAN_DIGEST}"
-          conftest test "${RUNNER_TEMP}/reviewed.plan.json" \
-            --policy policy --all-namespaces --output json >"${RUNNER_TEMP}/policy.json"
-          rm -f "${RUNNER_TEMP}/reviewed.plan.json"
+          tofu -chdir="${root}" state pull >"${final_state}" 2>>"${RUNNER_TEMP}/state-pull.log"
+          test "$(jq -er '.serial | numbers' "${final_state}")" = "${backend_serial}"
+          test "$(jq -er '.lineage' "${final_state}")" = "${backend_lineage}"
+          test "sha256:$(jq -cS . "${final_state}" | sha256sum | awk '{print $1}')" = "${backend_state_digest}"
 
-      - name: Authenticate the distinct apply identity
+          saved_plan_digest="sha256:$(sha256sum "${saved_plan}" | awk '{print $1}')"
+          plan_json_digest="sha256:$(sha256sum "${plan_json}" | awk '{print $1}')"
+          classification_digest="sha256:$(sha256sum "${classification}" | awk '{print $1}')"
+          policy_digest="sha256:$(sha256sum "${policy_result}" | awk '{print $1}')"
+          state_configuration_digest="sha256:$(printf '%s\0%s\0%s\0%s' \
+            "${STATE_BUCKET}" "${STATE_PREFIX}" "${ENVIRONMENT}" "${STACK}" | sha256sum | awk '{print $1}')"
+          created_epoch="$(date -u +%s)"
+          expires_epoch="$((created_epoch + 21600))"
+          jq -n \
+            --arg apiVersion "infrastructure.mindclade.dev/reviewed-plan-bundle/v1" \
+            --arg sourceCommit "${SOURCE_COMMIT}" \
+            --arg environment "${ENVIRONMENT}" \
+            --arg stack "${STACK}" \
+            --arg root "${root}" \
+            --arg reviewedPlanDigest "${REVIEWED_PLAN_DIGEST}" \
+            --arg savedPlanDigest "${saved_plan_digest}" \
+            --arg planJsonDigest "${plan_json_digest}" \
+            --arg classificationDigest "${classification_digest}" \
+            --arg policyDigest "${policy_digest}" \
+            --arg providerLockDigest "${provider_lock_digest}" \
+            --arg backendStateDigest "${backend_state_digest}" \
+            --arg backendLineage "${backend_lineage}" \
+            --arg stateConfigurationDigest "${state_configuration_digest}" \
+            --arg iamPrincipalsDigest "${IAM_PRINCIPALS_DIGEST}" \
+            --arg resourceReferencesDigest "${EXPECTED_RESOURCE_REFERENCES_DIGEST}" \
+            --arg planIdentityBinding "${PLAN_IDENTITY_BINDING}" \
+            --arg applyIdentityBinding "infrastructure-live-${ENVIRONMENT}-apply" \
+            --arg changeReference "${CHANGE_REFERENCE}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --argjson backendSerial "${backend_serial}" \
+            --argjson createdEpoch "${created_epoch}" \
+            --argjson expiresEpoch "${expires_epoch}" \
+            '{apiVersion: $apiVersion, sourceCommit: $sourceCommit, environment: $environment, stack: $stack, root: $root, reviewedPlanDigest: $reviewedPlanDigest, savedPlanDigest: $savedPlanDigest, planJsonDigest: $planJsonDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, providerLockDigest: $providerLockDigest, backendStateDigest: $backendStateDigest, backendLineage: $backendLineage, backendSerial: $backendSerial, stateConfigurationDigest: $stateConfigurationDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, planIdentityBinding: $planIdentityBinding, applyIdentityBinding: $applyIdentityBinding, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, createdEpoch: $createdEpoch, expiresEpoch: $expiresEpoch}' \
+            >"${bundle}/bundle.json"
+          (
+            cd "${bundle}"
+            sha256sum bundle.json provider.lock.hcl reviewed.tfplan >SHA256SUMS
+          )
+
+      - name: Upload the expiry-bound reviewed plan bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: infrastructure-plan-${{ inputs.environment }}-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan-bundle/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Publish redacted review coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/plan-bundle/bundle.json"
+          {
+            printf 'Reviewed plan digest: %s\n\n' "$(jq -er '.reviewedPlanDigest' "${bundle}")"
+            printf 'Saved-plan digest: %s\n\n' "$(jq -er '.savedPlanDigest' "${bundle}")"
+            printf 'Provider-lock digest: %s\n\n' "$(jq -er '.providerLockDigest' "${bundle}")"
+            printf 'Backend serial: %s\n\n' "$(jq -er '.backendSerial' "${bundle}")"
+            printf 'Plan identity binding: %s\n' "$(jq -er '.planIdentityBinding' "${bundle}")"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove plan working material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          rm -f \
+            "${root}/.terraform.lock.hcl" \
+            "${RUNNER_TEMP}/reviewed.plan.json" \
+            "${RUNNER_TEMP}/reviewed.plan.log" \
+            "${RUNNER_TEMP}/classification.json" \
+            "${RUNNER_TEMP}/policy.json" \
+            "${RUNNER_TEMP}/prior.state.json" \
+            "${RUNNER_TEMP}/final.state.json" \
+            "${RUNNER_TEMP}/tofu-init.log" \
+            "${RUNNER_TEMP}/state-pull.log"
+          rm -rf "${RUNNER_TEMP}/plan-bundle" "${RUNNER_TEMP}/tofu-plan-data"
+
+  apply:
+    name: apply-reviewed-plan
+    needs: [preflight, plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: infrastructure-apply
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      STACK: ${{ inputs.stack }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      REVIEWED_PLAN_DIGEST: ${{ inputs.plan_digest }}
+      CHANGE_REFERENCE: ${{ inputs.change_reference }}
+      STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
+      STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
+      APPLY_WIF_PROVIDER: ${{ inputs.environment == 'development' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_DEVELOPMENT_APPLY || inputs.environment == 'staging' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_STAGING_APPLY || inputs.environment == 'production' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_PRODUCTION_APPLY || vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_RESTRICTED_APPLY }}
+      APPLY_SERVICE_ACCOUNT: ${{ inputs.environment == 'development' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_DEVELOPMENT_APPLY || inputs.environment == 'staging' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_STAGING_APPLY || inputs.environment == 'production' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_PRODUCTION_APPLY || vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_RESTRICTED_APPLY }}
+      APPLY_OIDC_AUDIENCE: https://github.mindclade.io/oidc/infrastructure-live/${{ inputs.environment }}/apply
+    steps:
+      - name: Select the exact environment apply authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STATE_BUCKET}"
+          test -n "${STATE_PREFIX}"
+          test -n "${APPLY_WIF_PROVIDER}"
+          test -n "${APPLY_SERVICE_ACCOUNT}"
+          test "${APPLY_OIDC_AUDIENCE}" = "https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/apply"
+          [[ "${STATE_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
+          [[ "${STATE_PREFIX}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]]
+          [[ "${APPLY_WIF_PROVIDER}" =~ ^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/${ENVIRONMENT}-apply$ ]]
+          [[ "${APPLY_SERVICE_ACCOUNT}" =~ ^${ENVIRONMENT}-apply@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]]
+          printf 'APPLY_IDENTITY_BINDING=infrastructure-live-%s-apply\n' "${ENVIRONMENT}" >>"${GITHUB_ENV}"
+
+      - name: Check out the exact planned source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download only this run's reviewed plan bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: infrastructure-plan-${{ inputs.environment }}-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan-bundle
+
+      - name: Verify plan bundle integrity, provenance, and expiry
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/plan-bundle"
+          expected_files="SHA256SUMS bundle.json provider.lock.hcl reviewed.tfplan"
+          actual_files="$(find "${bundle}" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          test "${actual_files}" = "${expected_files}"
+          test -z "$(find "${bundle}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          (cd "${bundle}" && sha256sum --check --strict SHA256SUMS)
+          saved_plan_digest="sha256:$(sha256sum "${bundle}/reviewed.tfplan" | awk '{print $1}')"
+          provider_lock_digest="sha256:$(sha256sum "${bundle}/provider.lock.hcl" | awk '{print $1}')"
+          state_configuration_digest="sha256:$(printf '%s\0%s\0%s\0%s' \
+            "${STATE_BUCKET}" "${STATE_PREFIX}" "${ENVIRONMENT}" "${STACK}" | sha256sum | awk '{print $1}')"
+          jq -e \
+            --arg sourceCommit "${SOURCE_COMMIT}" \
+            --arg environment "${ENVIRONMENT}" \
+            --arg stack "${STACK}" \
+            --arg root "opentofu/live/${ENVIRONMENT}/${STACK}" \
+            --arg reviewedPlanDigest "${REVIEWED_PLAN_DIGEST}" \
+            --arg savedPlanDigest "${saved_plan_digest}" \
+            --arg providerLockDigest "${provider_lock_digest}" \
+            --arg stateConfigurationDigest "${state_configuration_digest}" \
+            --arg planIdentityBinding "infrastructure-live-${ENVIRONMENT}-plan" \
+            --arg applyIdentityBinding "${APPLY_IDENTITY_BINDING}" \
+            --arg changeReference "${CHANGE_REFERENCE}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            '(keys | sort) == ["apiVersion", "applyIdentityBinding", "backendLineage", "backendSerial", "backendStateDigest", "changeReference", "classificationDigest", "createdEpoch", "environment", "expiresEpoch", "iamPrincipalsDigest", "planIdentityBinding", "planJsonDigest", "policyDigest", "providerLockDigest", "resourceReferencesDigest", "reviewedPlanDigest", "root", "runAttempt", "runId", "savedPlanDigest", "sourceCommit", "stack", "stateConfigurationDigest"]
+              and (.apiVersion == "infrastructure.mindclade.dev/reviewed-plan-bundle/v1")
+              and (.sourceCommit == $sourceCommit)
+              and (.environment == $environment)
+              and (.stack == $stack)
+              and (.root == $root)
+              and (.reviewedPlanDigest == $reviewedPlanDigest)
+              and (.savedPlanDigest == $savedPlanDigest)
+              and (.providerLockDigest == $providerLockDigest)
+              and (.stateConfigurationDigest == $stateConfigurationDigest)
+              and (.planIdentityBinding == $planIdentityBinding)
+              and (.applyIdentityBinding == $applyIdentityBinding)
+              and (.changeReference == $changeReference)
+              and (.runId == $runId)
+              and (.runAttempt == $runAttempt)
+              and (.backendSerial | type == "number" and . >= 0 and floor == .)
+              and (.backendLineage | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+              and all(.backendStateDigest, .planJsonDigest, .classificationDigest, .policyDigest, .iamPrincipalsDigest, .resourceReferencesDigest; type == "string" and test("^sha256:[0-9a-f]{64}$"))' \
+            "${bundle}/bundle.json" >/dev/null
+          created_epoch="$(jq -er '.createdEpoch | numbers' "${bundle}/bundle.json")"
+          expires_epoch="$(jq -er '.expiresEpoch | numbers' "${bundle}/bundle.json")"
+          now_epoch="$(date -u +%s)"
+          test "${expires_epoch}" -eq "$((created_epoch + 21600))"
+          test "${now_epoch}" -ge "${created_epoch}"
+          test "${now_epoch}" -le "${expires_epoch}"
+
+      - name: Install checksum-verified Go and OpenTofu
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchains="${RUNNER_TEMP}/toolchains"
+          go_archive="${RUNNER_TEMP}/go.tar.gz"
+          tofu_archive="${RUNNER_TEMP}/tofu.zip"
+          tofu_bin="${RUNNER_TEMP}/tofu-bin"
+          mkdir -p "${toolchains}" "${tofu_bin}"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" --output "${go_archive}"
+          printf '%s  %s\n' "${GO_LINUX_AMD64_SHA256}" "${go_archive}" | sha256sum --check --strict
+          tar -xzf "${go_archive}" -C "${toolchains}"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
+            --output "${tofu_archive}"
+          printf '%s  %s\n' "${TOFU_LINUX_AMD64_SHA256}" "${tofu_archive}" | sha256sum --check --strict
+          unzip -q "${tofu_archive}" -d "${tofu_bin}"
+          chmod 0755 "${tofu_bin}/tofu"
+          printf '%s\n%s\n' "${toolchains}/go/bin" "${tofu_bin}" >>"${GITHUB_PATH}"
+
+      - name: Revalidate catalog authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          go -C tooling build -trimpath -o "${RUNNER_TEMP}/infractl" ./cmd/infractl
+          "${RUNNER_TEMP}/infractl" catalog validate --root .
+
+      - name: Authenticate the distinct environment-specific apply identity
         id: apply-auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ env.APPLY_WIF_PROVIDER }}
           service_account: ${{ env.APPLY_SERVICE_ACCOUNT }}
+          audience: ${{ env.APPLY_OIDC_AUDIENCE }}
           create_credentials_file: true
           export_environment_variables: true
+
+      - name: Recheck provider lock and exact backend serial before apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          bundle="${RUNNER_TEMP}/plan-bundle"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-apply-data"
+          test ! -e "${root}/.terraform.lock.hcl"
+          cp "${bundle}/provider.lock.hcl" "${root}/.terraform.lock.hcl"
+          tofu -chdir="${root}" init -input=false -lockfile=readonly \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}" \
+            >"${RUNNER_TEMP}/tofu-init.log" 2>&1
+          test "sha256:$(sha256sum "${root}/.terraform.lock.hcl" | awk '{print $1}')" = "$(jq -er '.providerLockDigest' "${bundle}/bundle.json")"
+          tofu -chdir="${root}" state pull >"${RUNNER_TEMP}/pre-apply.state.json" 2>"${RUNNER_TEMP}/state-pull.log"
+          test "$(jq -er '.serial | numbers' "${RUNNER_TEMP}/pre-apply.state.json")" = "$(jq -er '.backendSerial' "${bundle}/bundle.json")"
+          test "$(jq -er '.lineage' "${RUNNER_TEMP}/pre-apply.state.json")" = "$(jq -er '.backendLineage' "${bundle}/bundle.json")"
+          test "sha256:$(jq -cS . "${RUNNER_TEMP}/pre-apply.state.json" | sha256sum | awk '{print $1}')" = "$(jq -er '.backendStateDigest' "${bundle}/bundle.json")"
 
       - name: Apply only the verified saved plan
         shell: bash
@@ -254,42 +523,86 @@ jobs:
           set -euo pipefail
           unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
           root="opentofu/live/${ENVIRONMENT}/${STACK}"
-          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
-          tofu -chdir="${root}" apply -input=false -auto-approve "${RUNNER_TEMP}/reviewed.tfplan"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-apply-data"
+          tofu -chdir="${root}" apply -input=false -auto-approve "${RUNNER_TEMP}/plan-bundle/reviewed.tfplan"
+          tofu -chdir="${root}" state pull >"${RUNNER_TEMP}/post-apply.state.json" 2>>"${RUNNER_TEMP}/state-pull.log"
+          test "$(jq -er '.lineage' "${RUNNER_TEMP}/post-apply.state.json")" = "$(jq -er '.backendLineage' "${RUNNER_TEMP}/plan-bundle/bundle.json")"
+          prior_serial="$(jq -er '.backendSerial' "${RUNNER_TEMP}/plan-bundle/bundle.json")"
+          final_serial="$(jq -er '.serial | numbers' "${RUNNER_TEMP}/post-apply.state.json")"
+          test "${final_serial}" -gt "${prior_serial}"
 
       - name: Require post-apply zero drift
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
           unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply
           root="opentofu/live/${ENVIRONMENT}/${STACK}"
-          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-plan-data"
-          tofu -chdir="${root}" plan -input=false -lock-timeout=5m -detailed-exitcode
+          saved_plan="${RUNNER_TEMP}/post-apply.tfplan"
+          plan_json="${RUNNER_TEMP}/post-apply.plan.json"
+          plan_log="${RUNNER_TEMP}/post-apply.plan.log"
+          classification="${RUNNER_TEMP}/post-apply.classification.json"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-apply-data"
+          set +e
+          tofu -chdir="${root}" plan -input=false -lock-timeout=5m -detailed-exitcode \
+            -out="${saved_plan}" >"${plan_log}" 2>&1
+          plan_status="$?"
+          set -e
+          if [[ "${plan_status}" -eq 0 ]]; then
+            printf 'Post-apply drift check passed.\n'
+            exit 0
+          fi
+          if [[ "${plan_status}" -ne 2 ]]; then
+            printf '::error::Post-apply OpenTofu plan failed with exit code %s; raw output is suppressed.\n' "${plan_status}"
+            exit 1
+          fi
+          tofu -chdir="${root}" show -json "${saved_plan}" >"${plan_json}" 2>>"${plan_log}"
+          set +e
+          "${RUNNER_TEMP}/infractl" plan classify --input "${plan_json}" >"${classification}" 2>>"${plan_log}"
+          classifier_status="$?"
+          set -e
+          if [[ "${classifier_status}" -ne 0 && "${classifier_status}" -ne 2 ]]; then
+            printf '::error::Post-apply plan classification failed; raw output is suppressed.\n'
+            exit 1
+          fi
+          jq -c '{creates, updates, deletes, replaces, reads, noOps, safe}' "${classification}"
+          printf '::error::Post-apply drift was detected; only the redacted classification is shown.\n'
+          exit 2
 
-      - name: Create a redacted apply receipt
+      - name: Create a redacted exact-state apply receipt
         shell: bash
         run: |
           set -euo pipefail
           umask 077
-          classification_digest="sha256:$(sha256sum "${RUNNER_TEMP}/classification.json" | awk '{print $1}')"
-          policy_digest="sha256:$(sha256sum "${RUNNER_TEMP}/policy.json" | awk '{print $1}')"
+          bundle="${RUNNER_TEMP}/plan-bundle/bundle.json"
+          prior_serial="$(jq -er '.backendSerial' "${bundle}")"
+          final_serial="$(jq -er '.serial | numbers' "${RUNNER_TEMP}/post-apply.state.json")"
+          final_state_digest="sha256:$(jq -cS . "${RUNNER_TEMP}/post-apply.state.json" | sha256sum | awk '{print $1}')"
           jq -n \
             --arg apiVersion "infrastructure.mindclade.dev/apply-receipt/v1" \
             --arg environment "${ENVIRONMENT}" \
             --arg stack "${STACK}" \
             --arg sourceCommit "${SOURCE_COMMIT}" \
             --arg planDigest "${REVIEWED_PLAN_DIGEST}" \
-            --arg iamPrincipalsDigest "${IAM_PRINCIPALS_DIGEST}" \
-            --arg resourceReferencesDigest "${EXPECTED_RESOURCE_REFERENCES_DIGEST}" \
-            --arg classificationDigest "${classification_digest}" \
-            --arg policyDigest "${policy_digest}" \
+            --arg savedPlanDigest "$(jq -er '.savedPlanDigest' "${bundle}")" \
+            --arg providerLockDigest "$(jq -er '.providerLockDigest' "${bundle}")" \
+            --arg backendLineage "$(jq -er '.backendLineage' "${bundle}")" \
+            --arg priorBackendStateDigest "$(jq -er '.backendStateDigest' "${bundle}")" \
+            --arg finalBackendStateDigest "${final_state_digest}" \
+            --arg classificationDigest "$(jq -er '.classificationDigest' "${bundle}")" \
+            --arg policyDigest "$(jq -er '.policyDigest' "${bundle}")" \
+            --arg iamPrincipalsDigest "$(jq -er '.iamPrincipalsDigest' "${bundle}")" \
+            --arg resourceReferencesDigest "$(jq -er '.resourceReferencesDigest' "${bundle}")" \
+            --arg planIdentityBinding "$(jq -er '.planIdentityBinding' "${bundle}")" \
+            --arg applyIdentityBinding "${APPLY_IDENTITY_BINDING}" \
             --arg changeReference "${CHANGE_REFERENCE}" \
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
             --arg appliedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, appliedAt: $appliedAt}' \
+            --argjson priorBackendSerial "${prior_serial}" \
+            --argjson finalBackendSerial "${final_serial}" \
+            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, savedPlanDigest: $savedPlanDigest, providerLockDigest: $providerLockDigest, backendLineage: $backendLineage, priorBackendSerial: $priorBackendSerial, finalBackendSerial: $finalBackendSerial, priorBackendStateDigest: $priorBackendStateDigest, finalBackendStateDigest: $finalBackendStateDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, planIdentityBinding: $planIdentityBinding, applyIdentityBinding: $applyIdentityBinding, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, appliedAt: $appliedAt}' \
             >"${RUNNER_TEMP}/apply.receipt.json"
-          rm -f "${RUNNER_TEMP}/reviewed.tfplan" "${RUNNER_TEMP}/classification.json" "${RUNNER_TEMP}/policy.json"
 
       - name: Retain the redacted receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -298,3 +611,22 @@ jobs:
           path: ${{ runner.temp }}/apply.receipt.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Remove transient plan material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          rm -f \
+            "${root}/.terraform.lock.hcl" \
+            "${RUNNER_TEMP}/apply.receipt.json" \
+            "${RUNNER_TEMP}/pre-apply.state.json" \
+            "${RUNNER_TEMP}/post-apply.state.json" \
+            "${RUNNER_TEMP}/post-apply.tfplan" \
+            "${RUNNER_TEMP}/post-apply.plan.json" \
+            "${RUNNER_TEMP}/post-apply.plan.log" \
+            "${RUNNER_TEMP}/post-apply.classification.json" \
+            "${RUNNER_TEMP}/tofu-init.log" \
+            "${RUNNER_TEMP}/state-pull.log"
+          rm -rf "${RUNNER_TEMP}/plan-bundle" "${RUNNER_TEMP}/tofu-apply-data"

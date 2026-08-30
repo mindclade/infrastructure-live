@@ -1,6 +1,6 @@
 # Cloud drift
 
-Owner: `@mindclade/infrastructure`
+Owner: `@mindclade/platform-operations`
 
 Drift is a difference between reviewed source/state intent and observed cloud
 state. A scheduled workflow failure may also be an identity, backend, provider,

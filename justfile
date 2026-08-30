@@ -59,5 +59,11 @@ policy-verify:
 drift-classify desired observed:
     @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" drift classify --desired "{{desired}}" --observed "{{observed}}"
 
+reconciliation-verify desired observed:
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" reconciliation verify --desired "{{desired}}" --observed "{{observed}}"
+
+export-payload args:
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports payload {{args}}
+
 export-emit args:
     @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports emit {{args}}

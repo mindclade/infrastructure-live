@@ -71,6 +71,19 @@ variable "allowed_egress_rules" {
             try(tonumber(split("/", cidr)[1]), 0) > 0 &&
             try(cidrhost(cidr, 0), "") == try(split("/", cidr)[0], "invalid")
           ]),
+          try(
+            sum([
+              for cidr in rule.destination_cidrs :
+              pow(2, 32 - tonumber(split("/", cidr)[1]))
+              if !anytrue([
+                for covering_cidr in rule.destination_cidrs :
+                covering_cidr != cidr &&
+                tonumber(split("/", covering_cidr)[1]) < tonumber(split("/", cidr)[1]) &&
+                cidrcontains(covering_cidr, cidr)
+              ])
+            ]) < pow(2, 32),
+            false
+          ),
           alltrue([for port in rule.ports :
             can(regex("^[0-9]{1,5}(-[0-9]{1,5})?$", port)) &&
             try(tonumber(split("-", port)[0]), 0) >= 1 &&
@@ -81,7 +94,7 @@ variable "allowed_egress_rules" {
         ]
       ]))
     )
-    error_message = "Enabled egress requires named TCP/UDP rules with canonical non-default IPv4 CIDRs and bounded ports."
+    error_message = "Enabled egress requires named TCP/UDP rules with canonical IPv4 CIDRs whose union is not a default route and bounded ports."
   }
 }
 variable "labels" {

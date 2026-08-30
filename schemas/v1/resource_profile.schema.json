@@ -21,8 +21,36 @@
           "deletionProtectionRequired": {"const": true},
           "backupRetentionDays": {"type": "integer", "minimum": 7, "maximum": 365},
           "minimumZones": {"type": "integer", "minimum": 1, "maximum": 3},
-          "costGuardrail": {"enum": ["low", "moderate", "reliability-first", "security-first"]}
-        }
+          "costGuardrail": {"enum": ["low", "moderate", "reliability-first", "security-first"]},
+          "ciEvidenceArchive": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enabled", "location", "storageClass", "replicationMode", "kmsProtectionLevel", "kmsRotationPeriod", "retentionDays", "retentionLocked", "retentionLockReceipt", "softDeleteDays", "versioningEnabled", "archiveAfterDays", "archiveMinimumSizeBytes", "deleteAfterDays"],
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "location": {"const": "NAM4"},
+              "storageClass": {"const": "STANDARD"},
+              "replicationMode": {"const": "DEFAULT"},
+              "kmsProtectionLevel": {"const": "SOFTWARE"},
+              "kmsRotationPeriod": {"const": "7776000s"},
+              "retentionDays": {"const": 2555},
+              "retentionLocked": {"const": false},
+              "retentionLockReceipt": {"type": "null"},
+              "softDeleteDays": {"const": 30},
+              "versioningEnabled": {"const": false},
+              "archiveAfterDays": {"const": 90},
+              "archiveMinimumSizeBytes": {"const": 1048576},
+              "deleteAfterDays": {"const": 2555}
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"name": {"const": "production"}}, "required": ["name"]},
+            "then": {"required": ["ciEvidenceArchive"]},
+            "else": {"not": {"required": ["ciEvidenceArchive"]}}
+          }
+        ]
       }
     }
   }

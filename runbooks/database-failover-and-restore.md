@@ -1,6 +1,6 @@
 # Database failover and restore
 
-Owner: `@mindclade/infrastructure`
+Owner: `@mindclade/platform-operations`
 Data owner approval is required for every restore.
 
 A failover or restore changes live data availability and may overwrite newer

@@ -65,6 +65,16 @@ variable "config" {
     repository_writers = optional(map(set(string)), {})
     bucket_readers     = optional(map(set(string)), {})
     bucket_writers     = optional(map(set(string)), {})
+    ci_evidence_archive = optional(object({
+      identity_project_id         = optional(string)
+      audit_sink_binding_mode     = optional(string, "discover")
+      audit_sink_writer_identity  = optional(string)
+      audit_notification_channels = optional(set(string), [])
+      inventory_schedule = optional(object({
+        start = object({ day = number, month = number, year = number })
+        end   = object({ day = number, month = number, year = number })
+      }))
+    }), {})
   })
   default = {}
 }
@@ -78,13 +88,18 @@ locals {
     for profile in yamldecode(file("${path.root}/../../../../catalog/regions.yaml")).regions :
     profile if profile.name == local.environment_catalog.regionProfile
   ])
+  resource_profile = one([
+    for profile in yamldecode(file("${path.root}/../../../../catalog/resource-profiles.yaml")).resourceProfiles :
+    profile if profile.name == local.environment_catalog.resourceProfile
+  ])
 }
 
 module "stack" {
-  source            = "../../../stacks/artifacts"
-  environment       = var.environment
-  enabled           = var.enabled && local.environment_catalog.enabled && local.region_profile.enabled
-  primary_location  = local.region_profile.primaryLocation
-  recovery_location = local.region_profile.recoveryLocation
-  config            = var.config
+  source                      = "../../../stacks/artifacts"
+  environment                 = var.environment
+  enabled                     = var.enabled && local.environment_catalog.enabled && local.region_profile.enabled
+  primary_location            = local.region_profile.primaryLocation
+  recovery_location           = local.region_profile.recoveryLocation
+  ci_evidence_archive_profile = local.resource_profile.ciEvidenceArchive
+  config                      = var.config
 }

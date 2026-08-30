@@ -61,7 +61,10 @@ py_test(
 py_test(
     name = "partial_apply_reconciliation_test",
     srcs = ["tests/failure/test_partial_apply_reconciliation.py"],
-    data = ["//tooling:infractl"],
+    data = [
+        ":repository_source",
+        "//tooling:infractl",
+    ],
     main = "tests/failure/test_partial_apply_reconciliation.py",
 )
 

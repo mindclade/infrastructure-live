@@ -38,7 +38,7 @@ jobs:
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: infrastructure-${{ matrix.environment }}-plan
+    environment: trusted-build
     permissions:
       contents: read
       id-token: write
@@ -96,6 +96,12 @@ jobs:
           chmod 0755 "${bin_dir}/tofu"
           printf '%s\n' "${bin_dir}" >>"${GITHUB_PATH}"
 
+      - name: Install pinned policy verifier
+        run: |
+          set -euo pipefail
+          go install github.com/open-policy-agent/conftest@v0.69.0
+          printf '%s\n' "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
+
       - name: Authenticate the read-only plan identity
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
@@ -122,40 +128,72 @@ jobs:
           umask 077
           root="opentofu/live/${ENVIRONMENT}/${STACK}"
           data_dir="${RUNNER_TEMP}/tofu-data-${ENVIRONMENT}-${STACK}"
+          saved_plan="${RUNNER_TEMP}/drift.tfplan"
+          plan_json="${RUNNER_TEMP}/drift.plan.json"
+          plan_log="${RUNNER_TEMP}/drift.plan.log"
+          classification="${RUNNER_TEMP}/drift.classification.json"
+          policy_result="${RUNNER_TEMP}/drift.policy.json"
+          evidence="${RUNNER_TEMP}/drift.evidence.json"
+          cleanup() {
+            rm -f "${saved_plan}" "${plan_json}" "${plan_log}" "${classification}" "${policy_result}"
+          }
+          trap cleanup EXIT
           export TF_DATA_DIR="${data_dir}"
           tofu -chdir="${root}" init -input=false \
             -backend-config="bucket=${STATE_BUCKET}" \
             -backend-config="prefix=${STATE_PREFIX}/${ENVIRONMENT}/${STACK}"
           set +e
           tofu -chdir="${root}" plan -input=false -lock=false -detailed-exitcode \
-            -out="${RUNNER_TEMP}/drift.tfplan"
+            -out="${saved_plan}" >"${plan_log}" 2>&1
           plan_status="$?"
           set -e
           if [[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]; then
-            exit "${plan_status}"
+            printf '::error::OpenTofu drift plan failed with exit code %s; raw output is suppressed.\n' "${plan_status}"
+            exit 1
           fi
-          tofu -chdir="${root}" show -json "${RUNNER_TEMP}/drift.tfplan" >"${RUNNER_TEMP}/drift.plan.json"
+          tofu -chdir="${root}" show -json "${saved_plan}" >"${plan_json}" 2>>"${plan_log}"
           set +e
           "${RUNNER_TEMP}/infractl" plan classify \
-            --input "${RUNNER_TEMP}/drift.plan.json" >"${RUNNER_TEMP}/drift.classification.json"
+            --input "${plan_json}" >"${classification}" 2>>"${plan_log}"
           classifier_status="$?"
           set -e
           if [[ "${classifier_status}" -ne 0 && "${classifier_status}" -ne 2 ]]; then
-            exit "${classifier_status}"
+            printf '::error::Drift plan classification failed with exit code %s; raw output is suppressed.\n' "${classifier_status}"
+            exit 1
           fi
-          plan_digest="$(jq -er '.digest' "${RUNNER_TEMP}/drift.classification.json")"
+          set +e
+          conftest test "${plan_json}" \
+            --policy policy --all-namespaces --output json >"${policy_result}" 2>>"${plan_log}"
+          policy_status="$?"
+          set -e
+          if [[ "${policy_status}" -ne 0 && "${policy_status}" -ne 1 ]]; then
+            printf '::error::Drift plan policy evaluation failed with exit code %s; raw output is suppressed.\n' "${policy_status}"
+            exit 1
+          fi
+          if ! jq -e . "${policy_result}" >/dev/null 2>>"${plan_log}"; then
+            printf '::error::Drift plan policy evaluation returned invalid JSON; raw output is suppressed.\n'
+            exit 1
+          fi
+          policy_passed=false
+          if [[ "${policy_status}" -eq 0 ]]; then
+            policy_passed=true
+          fi
+          plan_digest="$(jq -er '.digest' "${classification}")"
+          policy_digest="sha256:$(sha256sum "${policy_result}" | awk '{print $1}')"
           jq -n \
             --arg apiVersion "infrastructure.mindclade.dev/drift-evidence/v1" \
             --arg environment "${ENVIRONMENT}" \
             --arg stack "${STACK}" \
             --arg sourceCommit "${GITHUB_SHA}" \
             --arg planDigest "${plan_digest}" \
+            --arg policyDigest "${policy_digest}" \
             --argjson planExitCode "${plan_status}" \
-            --slurpfile classification "${RUNNER_TEMP}/drift.classification.json" \
-            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, planExitCode: $planExitCode, classification: $classification[0]}' \
-            >"${RUNNER_TEMP}/drift.evidence.json"
-          rm -f "${RUNNER_TEMP}/drift.tfplan" "${RUNNER_TEMP}/drift.plan.json"
+            --argjson policyPassed "${policy_passed}" \
+            --slurpfile classification "${classification}" \
+            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, planExitCode: $planExitCode, policyPassed: $policyPassed, policyDigest: $policyDigest, classification: $classification[0]}' \
+            >"${evidence}"
           printf 'plan_status=%s\n' "${plan_status}" >>"${GITHUB_OUTPUT}"
+          printf 'policy_passed=%s\n' "${policy_passed}" >>"${GITHUB_OUTPUT}"
 
       - name: Retain redacted drift evidence only
         if: always() && steps.drift.outcome == 'success'
@@ -169,3 +207,7 @@ jobs:
       - name: Fail when drift exists
         if: steps.drift.outputs.plan_status == '2'
         run: exit 2
+
+      - name: Fail when plan policy is denied
+        if: steps.drift.outputs.policy_passed == 'false'
+        run: exit 1

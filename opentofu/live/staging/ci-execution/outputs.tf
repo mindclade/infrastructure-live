@@ -18,8 +18,8 @@ output "region_authority" {
   }
 
   precondition {
-    condition     = var.enabled == local.region_profile.enabled
-    error_message = "Root activation must match the selected catalog region profile state."
+    condition     = !var.enabled || local.region_profile.enabled
+    error_message = "An enabled root requires its selected catalog region profile to be enabled."
   }
   precondition {
     condition     = var.enabled ? local.region_profile.primaryLocation != null : true

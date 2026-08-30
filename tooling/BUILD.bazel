@@ -34,6 +34,7 @@ go_library(
     name = "exports",
     srcs = ["internal/exports/exports.go"],
     importpath = "github.com/mindclade/infrastructure-live/tooling/internal/exports",
+    deps = [":catalog"],
 )
 
 go_binary(

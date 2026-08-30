@@ -1,6 +1,6 @@
 # Regional recovery
 
-Owner: `@mindclade/infrastructure`
+Owner: `@mindclade/platform-operations`
 Incident command coordinates Security, Platform, Data, and product owners.
 
 Regional recovery is a protected, multi-stack operation. Do not declare a

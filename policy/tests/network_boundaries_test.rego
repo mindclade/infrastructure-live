@@ -43,6 +43,69 @@ test_rejects_default_route_egress_allow if {
 	count(violations) == 1
 }
 
+test_rejects_ipv6_default_route_egress_allow if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.ipv6_default_egress",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"destination_ranges": ["::/0"],
+				"allow": [{"protocol": "tcp", "ports": ["443"]}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_rejects_split_default_route_egress_allow if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.split_default_egress",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"destination_ranges": ["0.0.0.0/1", "128.0.0.0/1"],
+				"allow": [{"protocol": "tcp", "ports": ["443"]}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_rejects_fragmented_default_route_egress_allow if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.fragmented_default_egress",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"destination_ranges": ["0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2", "192.0.0.0/2"],
+				"allow": [{"protocol": "tcp", "ports": ["443"]}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_accepts_incomplete_default_route_fragments if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "google_compute_firewall.incomplete_egress",
+			"type": "google_compute_firewall",
+			"change": {"actions": ["create"], "after": {
+				"direction": "EGRESS",
+				"destination_ranges": ["0.0.0.0/1", "128.0.0.0/2"],
+				"allow": [{"protocol": "tcp", "ports": ["443"]}],
+				"log_config": [{"metadata": "INCLUDE_ALL_METADATA"}],
+			}},
+		}],
+	}
+	count(violations) == 0
+}
 test_rejects_any_protocol_egress_allow if {
 	violations := deny with input as {
 		"resource_changes": [{

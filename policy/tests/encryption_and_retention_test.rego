@@ -91,6 +91,93 @@ test_accepts_locked_restricted_storage if {
 	count(violations) == 0
 }
 
+test_accepts_production_ci_evidence_archive_contract if {
+	violations := deny with input as {
+		"variables": {"environment": {"value": "production"}},
+		"resource_changes": [{
+			"address": "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[\"project-production-ci-evidence\"]",
+			"type": "google_storage_bucket",
+			"change": {"actions": ["create"], "after": {
+				"storage_class": "STANDARD",
+				"rpo": "DEFAULT",
+				"force_destroy": false,
+				"uniform_bucket_level_access": true,
+				"public_access_prevention": "enforced",
+				"labels": {"data_classification": "internal", "purpose": "ci-evidence"},
+				"versioning": [{"enabled": false}],
+				"soft_delete_policy": [{"retention_duration_seconds": 2592000}],
+				"retention_policy": [{"retention_period": 220752000, "is_locked": false}],
+				"encryption": [{"default_kms_key_name": "projects/project/locations/nam4/keyRings/ci-evidence/cryptoKeys/archive"}],
+				"lifecycle_rule": [
+					{
+						"action": [{"type": "SetStorageClass", "storage_class": "ARCHIVE"}],
+						"condition": [{"age": 90, "size_above_bytes": 1048576, "matches_storage_class": ["STANDARD"], "with_state": "LIVE"}],
+					},
+					{
+						"action": [{"type": "Delete"}],
+						"condition": [{"age": 2555, "matches_storage_class": ["STANDARD", "ARCHIVE"], "with_state": "LIVE"}],
+					},
+				],
+			}},
+		}],
+	}
+	count(violations) == 0
+}
+
+test_rejects_ci_evidence_archive_lifecycle_drift if {
+	violations := deny with input as {
+		"variables": {"environment": {"value": "production"}},
+		"resource_changes": [{
+			"address": "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[\"project-production-ci-evidence\"]",
+			"type": "google_storage_bucket",
+			"change": {"actions": ["update"], "after": {
+				"storage_class": "STANDARD",
+				"rpo": "DEFAULT",
+				"force_destroy": false,
+				"uniform_bucket_level_access": true,
+				"public_access_prevention": "enforced",
+				"labels": {"data_classification": "internal", "purpose": "ci-evidence"},
+				"versioning": [{"enabled": false}],
+				"soft_delete_policy": [{"retention_duration_seconds": 2592000}],
+				"retention_policy": [{"retention_period": 220752000, "is_locked": false}],
+				"encryption": [{"default_kms_key_name": "projects/project/locations/nam4/keyRings/ci-evidence/cryptoKeys/archive"}],
+				"lifecycle_rule": [],
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
+test_accepts_ci_evidence_archive_software_key if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "module.stack.module.ci_evidence_archive_kms.google_kms_crypto_key.this[\"archive\"]",
+			"type": "google_kms_crypto_key",
+			"change": {"actions": ["update"], "after": {
+				"version_template": [{"algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION", "protection_level": "SOFTWARE"}],
+				"rotation_period": "7776000s",
+				"labels": {"data_classification": "internal", "purpose": "ci-evidence"},
+			}},
+		}],
+	}
+	count(violations) == 0
+}
+
+test_rejects_ci_evidence_archive_key_contract_drift if {
+	violations := deny with input as {
+		"resource_changes": [{
+			"address": "module.stack.module.ci_evidence_archive_kms.google_kms_crypto_key.this[\"archive\"]",
+			"type": "google_kms_crypto_key",
+			"change": {"actions": ["update"], "after": {
+				"version_template": [{"algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION", "protection_level": "HSM"}],
+				"rotation_period": "7776000s",
+				"labels": {"data_classification": "internal", "purpose": "ci-evidence"},
+			}},
+		}],
+	}
+	count(violations) == 1
+}
+
 test_rejects_short_restricted_observability_retention if {
 	violations := deny with input as {
 		"variables": {"environment": {"value": "restricted"}},
@@ -138,7 +225,11 @@ test_rejects_new_cmek_without_qualified_service_agent if {
 		"resource_changes": [{
 			"address": "module.stack.module.kms.google_kms_crypto_key.this[\"logs\"]",
 			"type": "google_kms_crypto_key",
-			"change": {"actions": ["create"], "after": {"labels": {"data_classification": "internal"}}},
+			"change": {"actions": ["create"], "after": {
+				"key_ring": "projects/logging/locations/us/keyRings/logs",
+				"name": "platform",
+				"labels": {"data_classification": "internal"},
+			}},
 		}],
 	}
 	count(violations) == 1
@@ -150,14 +241,100 @@ test_accepts_new_cmek_with_qualified_service_agent if {
 			{
 				"address": "module.stack.module.kms.google_kms_crypto_key.this[\"logs\"]",
 				"type": "google_kms_crypto_key",
-				"change": {"actions": ["create"], "after": {"labels": {"data_classification": "internal"}}},
+				"change": {"actions": ["create"], "after": {
+					"key_ring": "projects/logging/locations/us/keyRings/logs",
+					"name": "platform",
+					"labels": {"data_classification": "internal"},
+				}},
 			},
 			{
 				"address": "module.stack.module.kms.google_kms_crypto_key_iam_member.encrypter_decrypter[\"logs-agent\"]",
 				"type": "google_kms_crypto_key_iam_member",
 				"change": {"actions": ["create"], "after": {
+					"crypto_key_id": "projects/logging/locations/us/keyRings/logs/cryptoKeys/platform",
 					"role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
 					"member": "serviceAccount:service-123456789@gcp-sa-logging.iam.gserviceaccount.com",
+				}},
+			},
+		],
+	}
+	count(violations) == 0
+}
+
+test_rejects_each_new_cmek_without_its_own_binding if {
+	violations := deny with input as {
+		"resource_changes": [
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key.this[\"logs\"]",
+				"type": "google_kms_crypto_key",
+				"change": {"actions": ["create"], "after": {
+					"key_ring": "projects/platform/locations/us/keyRings/shared",
+					"name": "logs",
+					"labels": {"data_classification": "internal"},
+				}},
+			},
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key.this[\"metrics\"]",
+				"type": "google_kms_crypto_key",
+				"change": {"actions": ["create"], "after": {
+					"key_ring": "projects/platform/locations/us/keyRings/shared",
+					"name": "metrics",
+					"labels": {"data_classification": "internal"},
+				}},
+			},
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key_iam_member.encrypter_decrypter[\"logs-agent\"]",
+				"type": "google_kms_crypto_key_iam_member",
+				"change": {"actions": ["create"], "after": {
+					"crypto_key_id": "projects/platform/locations/us/keyRings/shared/cryptoKeys/logs",
+					"role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+					"member": "serviceAccount:service-123456789@gcp-sa-logging.iam.gserviceaccount.com",
+				}},
+			},
+		],
+	}
+	count(violations) == 1
+	some message in violations
+	contains(message, `google_kms_crypto_key.this["metrics"]`)
+}
+
+test_accepts_multiple_new_cmeks_with_corresponding_bindings if {
+	violations := deny with input as {
+		"resource_changes": [
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key.this[\"logs\"]",
+				"type": "google_kms_crypto_key",
+				"change": {"actions": ["create"], "after": {
+					"key_ring": "projects/platform/locations/us/keyRings/shared",
+					"name": "logs",
+					"labels": {"data_classification": "internal"},
+				}},
+			},
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key.this[\"metrics\"]",
+				"type": "google_kms_crypto_key",
+				"change": {"actions": ["create"], "after": {
+					"key_ring": "projects/platform/locations/us/keyRings/shared",
+					"name": "metrics",
+					"labels": {"data_classification": "internal"},
+				}},
+			},
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key_iam_member.encrypter_decrypter[\"logs-agent\"]",
+				"type": "google_kms_crypto_key_iam_member",
+				"change": {"actions": ["create"], "after": {
+					"crypto_key_id": "projects/platform/locations/us/keyRings/shared/cryptoKeys/logs",
+					"role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+					"member": "serviceAccount:service-123456789@gcp-sa-logging.iam.gserviceaccount.com",
+				}},
+			},
+			{
+				"address": "module.stack.module.kms.google_kms_crypto_key_iam_member.encrypter_decrypter[\"metrics-agent\"]",
+				"type": "google_kms_crypto_key_iam_member",
+				"change": {"actions": ["create"], "after": {
+					"crypto_key_id": "projects/platform/locations/us/keyRings/shared/cryptoKeys/metrics",
+					"role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+					"member": "serviceAccount:service-123456789@gcp-sa-monitoring.iam.gserviceaccount.com",
 				}},
 			},
 		],
@@ -292,4 +469,105 @@ test_accepts_provider_shaped_protected_database_with_cmek if {
 		}],
 	}
 	count(violations) == 0
+}
+
+test_rejects_ci_evidence_retention_lock_without_receipt if {
+	violations := deny with input as {
+		"variables": {"environment": {"value": "production"}},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {"retention_locked": true, "retention_lock_receipt": null},
+		}}}},
+		"resource_changes": [archive_lock_change(true)],
+	}
+	count(violations) == 1
+}
+
+test_rejects_ci_evidence_retention_lock_even_with_self_asserted_generation_bound_receipt if {
+	bucket := "project-production-ci-evidence"
+	verifier := "serviceAccount:ci-evidence-verifier@identity-project.iam.gserviceaccount.com"
+	receipt := exact_lock_receipt(bucket, verifier)
+	violations := deny with input as {
+		"variables": {"environment": {"value": "production"}},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {
+				"retention_locked": true,
+				"retention_lock_receipt": receipt,
+				"verifier_principal": verifier,
+			},
+		}}}},
+		"resource_changes": [archive_lock_change(true)],
+	}
+	count(violations) == 1
+}
+
+test_rejects_ci_evidence_retention_lock_with_tampered_canary_generation if {
+	bucket := "project-production-ci-evidence"
+	verifier := "serviceAccount:ci-evidence-verifier@identity-project.iam.gserviceaccount.com"
+	receipt := object.union(exact_lock_receipt(bucket, verifier), {"canaryGeneration": "43"})
+	violations := deny with input as {
+		"variables": {"environment": {"value": "production"}},
+		"planned_values": {"outputs": {"region_authority": {"value": {
+			"ci_evidence_archive": {
+				"retention_locked": true,
+				"retention_lock_receipt": receipt,
+				"verifier_principal": verifier,
+			},
+		}}}},
+		"resource_changes": [archive_lock_change(true)],
+	}
+	count(violations) == 1
+}
+
+archive_lock_change(locked) := {
+	"address": "module.stack.module.ci_evidence_archive_bucket.google_storage_bucket.this[\"project-production-ci-evidence\"]",
+	"type": "google_storage_bucket",
+	"change": {"actions": ["update"], "after": {
+		"name": "project-production-ci-evidence",
+		"location": "NAM4",
+		"storage_class": "STANDARD",
+		"rpo": "DEFAULT",
+		"uniform_bucket_level_access": true,
+		"public_access_prevention": "enforced",
+		"force_destroy": false,
+		"labels": {"data_classification": "internal", "purpose": "ci-evidence"},
+		"versioning": [{"enabled": false}],
+		"soft_delete_policy": [{"retention_duration_seconds": 2592000}],
+		"retention_policy": [{"retention_period": 220752000, "is_locked": locked}],
+		"encryption": [{"default_kms_key_name": "projects/project/locations/nam4/keyRings/ci-evidence/cryptoKeys/archive"}],
+		"lifecycle_rule": [
+			{"action": [{"type": "SetStorageClass", "storage_class": "ARCHIVE"}], "condition": [{"age": 90, "size_above_bytes": 1048576, "with_state": "LIVE", "matches_storage_class": ["STANDARD"]}]},
+			{"action": [{"type": "Delete"}], "condition": [{"age": 2555, "with_state": "LIVE", "matches_storage_class": ["STANDARD", "ARCHIVE"]}]},
+		],
+	}},
+}
+
+exact_lock_receipt(bucket, verifier) := object.union(base, {
+	"receiptDigest": sprintf("sha256:%s", [crypto.sha256(concat("\n", [
+		base.receiptVersion,
+		base.canaryObjectUri,
+		base.canaryGeneration,
+		base.verifierIdentity,
+		base.verifierDigest,
+		base.denialEvidenceDigest,
+		base.auditEvidenceDigest,
+		base.platformApprovalIdentity,
+		base.securityApprovalIdentity,
+		base.approvedAt,
+		base.sourceCommit,
+	]))]),
+}) if {
+	source_commit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	base := {
+		"receiptVersion": "ci-evidence-retention-lock/v1",
+		"canaryObjectUri": sprintf("gs://%s/qualification/canary/%s/evidence.json#42", [bucket, source_commit]),
+		"canaryGeneration": "42",
+		"verifierIdentity": verifier,
+		"verifierDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"denialEvidenceDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		"auditEvidenceDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		"platformApprovalIdentity": "group:platform-operations@mindclade.dev",
+		"securityApprovalIdentity": "group:security@mindclade.dev",
+		"approvedAt": "2026-08-30T12:00:00Z",
+		"sourceCommit": source_commit,
+	}
 }

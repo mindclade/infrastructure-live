@@ -1,7 +1,7 @@
 # Cluster control-plane failure
 
-Owner: `@mindclade/infrastructure`
-In-cluster owner: `@mindclade/platform`
+Owner: `@mindclade/platform-operations`
+In-cluster owner: `@mindclade/platform-operations`
 
 This repository owns the GKE cloud resource and access prerequisites. GitOps
 owns Argo CD and in-cluster desired state. Do not use a cloud incident to create

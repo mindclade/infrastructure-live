@@ -19,6 +19,21 @@ resourceProfiles:
     backupRetentionDays: 35
     minimumZones: 3
     costGuardrail: reliability-first
+    ciEvidenceArchive:
+      enabled: false
+      location: NAM4
+      storageClass: STANDARD
+      replicationMode: DEFAULT
+      kmsProtectionLevel: SOFTWARE
+      kmsRotationPeriod: 7776000s
+      retentionDays: 2555
+      retentionLocked: false
+      retentionLockReceipt: null
+      softDeleteDays: 30
+      versioningEnabled: false
+      archiveAfterDays: 90
+      archiveMinimumSizeBytes: 1048576
+      deleteAfterDays: 2555
   - name: restricted
     highAvailabilityRequired: true
     deletionProtectionRequired: true

@@ -9,12 +9,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def classify(desired, observed):
+def classify(desired, observed, *, raw=False):
     directory = tempfile.TemporaryDirectory()
     desired_path = Path(directory.name) / "desired.json"
     observed_path = Path(directory.name) / "observed.json"
-    desired_path.write_text(json.dumps(desired, separators=(",", ":")), encoding="utf-8")
-    observed_path.write_text(json.dumps(observed, separators=(",", ":")), encoding="utf-8")
+    desired_data = desired if raw else json.dumps(desired, separators=(",", ":"))
+    observed_data = observed if raw else json.dumps(observed, separators=(",", ":"))
+    desired_path.write_text(desired_data, encoding="utf-8")
+    observed_path.write_text(observed_data, encoding="utf-8")
     runfiles = Path(os.environ.get("TEST_SRCDIR", "/nonexistent"))
     binaries = sorted(path for path in runfiles.rglob("infractl") if path.is_file() and os.access(path, os.X_OK))
     if binaries:
@@ -45,6 +47,28 @@ class CloudDriftClassificationTest(unittest.TestCase):
         paths = [finding["path"] for finding in report["findings"]]
         self.assertEqual(paths, sorted(paths))
         self.assertNotIn("altered", result.stdout)
+
+    def test_distinct_large_integers_are_not_rounded_equal(self):
+        desired = 9007199254740992
+        observed = 9007199254740993
+        result = classify({"generation": desired}, {"generation": observed})
+        self.assertEqual(result.returncode, 2)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["clean"])
+        self.assertEqual(report["findings"], [{"path": "$.generation", "kind": "changed"}])
+        self.assertNotIn(str(desired), result.stdout + result.stderr)
+        self.assertNotIn(str(observed), result.stdout + result.stderr)
+
+    def test_identical_large_integer_is_clean(self):
+        generation = 9007199254740993
+        result = classify({"generation": generation}, {"generation": generation})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["clean"])
+
+    def test_trailing_json_value_is_rejected(self):
+        result = classify('{"generation":1} {}', '{"generation":1}', raw=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("parse desired JSON: unexpected trailing JSON value", result.stderr)
 
 
 if __name__ == "__main__":

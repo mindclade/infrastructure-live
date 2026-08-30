@@ -26,10 +26,12 @@ unprotected workstation or agent session.
 Only the current protected `main` branch is supported. Plans, state, provider
 caches, observations, temporary exports, and local lock files are not release
 artifacts. An apply receipt is a redacted locator bound to its exact source
-commit, environment, stack, plan digest, policy and classification digests,
-IAM-principal qualification digest, resource-reference qualification digest,
-and workflow run. It contains neither identity bindings nor approval evidence
-and is not live-system proof by itself. The protected workflow and GitHub
+commit, environment, stack, reviewed and saved-plan digests, transient provider
+lock, exact pre/post backend lineage/serial/state digests, policy and
+classification digests, IAM-principal qualification digest,
+resource-reference qualification digest, identity-binding names, and workflow
+run. It contains neither credentials, state, provider values, reviewer
+identities, nor approval evidence and is not live-system proof by itself. The protected workflow and GitHub
 environment record are authoritative for plan/apply identities, approval, and
 artifact retention.
 
