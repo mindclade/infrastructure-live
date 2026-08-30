@@ -253,6 +253,17 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             self.assertIn(field, component)
         self.assertNotIn("  production_authority: true", component)
 
+    def test_ci_evidence_recovery_uses_the_canonical_repository_inventory(self):
+        workflow = workflow_source("disaster-recovery.yml")
+        activation = workflow_step_source(
+            workflow, "Validate connected-verifier activation contract"
+        )
+        self.assertIn(
+            r"(\.github|bootstrap|github-config|gitops|infrastructure-live|mindclade)",
+            activation,
+        )
+        self.assertNotIn("mindclade-internal-monorepo", activation)
+
     def test_pull_request_workflow_is_the_single_canonical_source_gate(self):
         workflow = workflow_source("pull-request.yml")
         codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")

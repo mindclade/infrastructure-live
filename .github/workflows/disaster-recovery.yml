@@ -183,7 +183,7 @@ jobs:
           [[ "${CI_EVIDENCE_BUCKET}" =~ ^[a-z0-9][a-z0-9.-]{1,220}[a-z0-9]$ ]]
           [[ "${CI_EVIDENCE_BUCKET}" == *-production-ci-evidence ]]
           [[ "${CI_EVIDENCE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          object_pattern='^gs://([a-z0-9][a-z0-9.-]{1,220}[a-z0-9])/ci-evidence/v1/mindclade/(\.github|bootstrap|github-config|gitops|infrastructure-live|mindclade-internal-monorepo)/([0-9a-f]{40})/([1-9][0-9]*)/([1-9][0-9]*)/([1-9][0-9]*)/ci-evidence\.json#([1-9][0-9]*)$'
+          object_pattern='^gs://([a-z0-9][a-z0-9.-]{1,220}[a-z0-9])/ci-evidence/v1/mindclade/(\.github|bootstrap|github-config|gitops|infrastructure-live|mindclade)/([0-9a-f]{40})/([1-9][0-9]*)/([1-9][0-9]*)/([1-9][0-9]*)/ci-evidence\.json#([1-9][0-9]*)$'
           [[ "${CI_EVIDENCE_OBJECT_URI}" =~ ${object_pattern} ]]
           [[ "${BASH_REMATCH[1]}" == "${CI_EVIDENCE_BUCKET}" ]]
           printf 'source_revision=%s\ngeneration=%s\n' \
