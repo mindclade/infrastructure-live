@@ -38,4 +38,4 @@ spec:
     source_ready:
       description: Source, metadata, policy, tests, and required reviews are complete; no Google Cloud or GitHub mutation is implied.
     connected:
-      description: Protected GitHub and Google Cloud identities, state backends, resources, recovery, and the environment-scoped bootstrap infrastructure-export HSM signer have been independently verified against the exact qualified commit; source remains fail-closed until signer IAM and exact key-version/public-key bindings are published.
+      description: Protected GitHub and Google Cloud identities, state backends, resources, recovery, and the environment-scoped bootstrap infrastructure-export HSM signer have been independently verified against the exact qualified commit, and Blueprint A3.8/A3.9 has ratified a reusable infrastructure workflow interface or explicit protected-control-plane exception; source remains fail-closed until those gates, signer IAM, and exact key-version/public-key bindings are published.
