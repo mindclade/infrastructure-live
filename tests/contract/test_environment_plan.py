@@ -175,7 +175,8 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         expected = {
             ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel",
             "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile",
-            ".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
+            ".github/CODEOWNERS", ".github/actionlint.yaml", ".github/dependabot.yml",
+            ".github/pull_request_template.md",
             *{f".github/workflows/{name}.yml" for name in (
                 "pull-request", "drift-detection", "protected-apply", "disaster-recovery",
             )},
@@ -222,10 +223,12 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 if child not in ignored_directories and not child.startswith("bazel-")
             ]
             for name in files:
-                if name == ".DS_Store" or name.endswith((".pyc", ".pyo")):
-                    continue
                 path = Path(directory) / name
                 relative = path.relative_to(ROOT).as_posix()
+                if name == ".DS_Store" or name.endswith((".pyc", ".pyo")):
+                    continue
+                if relative_directory == Path(".") and name.startswith("bazel-") and path.is_symlink():
+                    continue
                 if path.is_symlink():
                     source_symlinks.append(relative)
                 if path.stat().st_size == 0:
