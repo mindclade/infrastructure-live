@@ -107,6 +107,7 @@ jobs:
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+          audience: sts.googleapis.com
           create_credentials_file: true
           export_environment_variables: true
 

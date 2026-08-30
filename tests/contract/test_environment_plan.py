@@ -379,10 +379,15 @@ class EnvironmentPlanContractTest(unittest.TestCase):
     def test_drift_evidence_records_policy_outcome_without_policy_contents(self):
         workflow = workflow_source("drift-detection.yml")
         step = workflow_step_source(workflow, "Create a read-only drift plan and redacted evidence")
+        authentication = workflow_step_source(
+            workflow, "Authenticate the read-only plan identity"
+        )
 
         self.assertIn("    environment: trusted-build", workflow)
         self.assertNotIn("environment: infrastructure-${{ matrix.environment }}-plan", workflow)
         self.assertIn("github.com/open-policy-agent/conftest@v0.69.0", workflow)
+        self.assertIn("          audience: sts.googleapis.com", authentication)
+        self.assertNotIn("audience: ${{", authentication)
         self.assertIn('-out="${saved_plan}" >"${plan_log}" 2>&1', step)
         self.assertIn('[[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]', step)
         self.assertIn('conftest test "${plan_json}"', step)
