@@ -174,7 +174,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         )
         expected = {
             ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel",
-            "README.md", "SECURITY.md", "component.yaml", "justfile",
+            "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile",
             ".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
             *{f".github/workflows/{name}.yml" for name in (
                 "pull-request", "drift-detection", "protected-apply", "disaster-recovery",
@@ -271,6 +271,15 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("  required:\n    name: required", workflow)
         self.assertNotIn("id-token: write", workflow)
         self.assertNotIn("contents: write", workflow)
+        self.assertIn(
+            "DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25",
+            workflow,
+        )
+        self.assertIn("nix build --no-update-lock-file .#toolchain", workflow)
+        self.assertIn("nix flake check --no-update-lock-file", workflow)
+        self.assertIn(
+            "nix develop --no-update-lock-file .#ci --command just ci", workflow
+        )
         self.assertIn("@mindclade/platform-operations", codeowners)
         self.assertIn("@mindclade/security", codeowners)
         self.assertNotIn("@mindclade/infrastructure", codeowners)
