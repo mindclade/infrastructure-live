@@ -41,34 +41,34 @@ def workflow_step_source(workflow, name):
     return workflow[start:end]
 
 
-def test_ed25519_sign(message):
-    # RFC 8032 arithmetic implemented with Python stdlib for a deterministic,
-    # non-production test key. Runtime verification remains Go's crypto/ed25519.
-    field = 2**255 - 19
-    order = 2**252 + 27742317777372353535851937790883648493
-    curve_d = (-121665 * pow(121666, field - 2, field)) % field
-    sqrt_minus_one = pow(2, (field - 1) // 4, field)
-
-    def recover_x(y):
-        xx = (y * y - 1) * pow(curve_d * y * y + 1, field - 2, field)
-        x = pow(xx, (field + 3) // 8, field)
-        if (x * x - xx) % field != 0:
-            x = (x * sqrt_minus_one) % field
-        if x % 2:
-            x = field - x
-        return x
+def test_p256_sign(message):
+    # Deterministic, non-production P-256 arithmetic implemented with stdlib.
+    # Runtime parsing and verification remain Go's crypto/x509 and crypto/ecdsa.
+    field = int("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 16)
+    order = int("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16)
+    base = (
+        int("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 16),
+        int("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 16),
+    )
 
     def add(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
         x1, y1 = left
         x2, y2 = right
-        denominator = curve_d * x1 * x2 * y1 * y2
-        return (
-            (x1 * y2 + x2 * y1) * pow(1 + denominator, field - 2, field) % field,
-            (y1 * y2 + x1 * x2) * pow(1 - denominator, field - 2, field) % field,
-        )
+        if x1 == x2 and (y1 + y2) % field == 0:
+            return None
+        if left == right:
+            slope = (3 * x1 * x1 - 3) * pow(2 * y1, field - 2, field) % field
+        else:
+            slope = (y2 - y1) * pow(x2 - x1, field - 2, field) % field
+        x3 = (slope * slope - x1 - x2) % field
+        return x3, (slope * (x1 - x3) - y1) % field
 
     def multiply(point, scalar):
-        result = (0, 1)
+        result = None
         addend = point
         while scalar:
             if scalar & 1:
@@ -77,33 +77,28 @@ def test_ed25519_sign(message):
             scalar >>= 1
         return result
 
-    def encode(point):
-        x, y = point
-        return (y | ((x & 1) << 255)).to_bytes(32, "little")
+    def integer(value):
+        encoded = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        if encoded[0] & 0x80:
+            encoded = b"\x00" + encoded
+        return b"\x02" + bytes([len(encoded)]) + encoded
 
-    base_y = (4 * pow(5, field - 2, field)) % field
-    base = (recover_x(base_y), base_y)
-    seed = bytes.fromhex(
-        "9d61b19deffd5a60ba844af492ec2cc4"
-        "4449c5697b326919703bac031cae7f60"
-    )
-    expanded = hashlib.sha512(seed).digest()
-    scalar = int.from_bytes(expanded[:32], "little")
-    scalar &= (1 << 254) - 8
-    scalar |= 1 << 254
-    public_key = encode(multiply(base, scalar))
-    nonce = int.from_bytes(hashlib.sha512(expanded[32:] + message).digest(), "little") % order
-    encoded_nonce = encode(multiply(base, nonce))
-    challenge = int.from_bytes(
-        hashlib.sha512(encoded_nonce + public_key + message).digest(), "little"
-    ) % order
-    signature = encoded_nonce + ((nonce + challenge * scalar) % order).to_bytes(32, "little")
-    return public_key, signature
+    scalar = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-key").digest(), "big") % (order - 1) + 1
+    public_x, public_y = multiply(base, scalar)
+    uncompressed = b"\x04" + public_x.to_bytes(32, "big") + public_y.to_bytes(32, "big")
+    public_key = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    digest = hashlib.sha256(message).digest()
+    nonce = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-nonce" + digest).digest(), "big") % (order - 1) + 1
+    nonce_x, _ = multiply(base, nonce)
+    r = nonce_x % order
+    s = (pow(nonce, -1, order) * (int.from_bytes(digest, "big") + r * scalar)) % order
+    encoded = integer(r) + integer(s)
+    return public_key, b"\x30" + bytes([len(encoded)]) + encoded
 
 
 def signed_export(
     directory, resources, stack="foundation", provenance_uri=None,
-    tamper_payload=None, trusted_key_id=None,
+    tamper_payload=None, trusted_key_version=None, trusted_public_key_digest=None,
 ):
     directory = Path(directory)
     resources_path = directory / "resources.json"
@@ -111,7 +106,7 @@ def signed_export(
     signature_path = directory / "export.signature.json"
     output_path = directory / "export.json"
     resources_path.write_text(json.dumps(resources), encoding="utf-8")
-    provenance_uri = provenance_uri or f"https://evidence.example/provenance/development-{stack}"
+    provenance_uri = provenance_uri or "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
     arguments = [
         "--environment", "development",
         "--stack", stack,
@@ -134,11 +129,13 @@ def signed_export(
         return payload_result, output_path
 
     payload = payload_path.read_bytes()
-    public_key, detached_signature = test_ed25519_sign(payload)
+    public_key, detached_signature = test_p256_sign(payload)
+    key_version = "projects/mindclade-bootstrap/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/7"
     envelope = {
-        "algorithm": "Ed25519",
-        "keyId": "sha256:" + hashlib.sha256(public_key).hexdigest(),
+        "algorithm": "EC_SIGN_P256_SHA256",
+        "keyVersion": key_version,
         "publicKey": base64.b64encode(public_key).decode("ascii"),
+        "publicKeyDigest": "sha256:" + hashlib.sha256(public_key).hexdigest(),
         "value": base64.b64encode(detached_signature).decode("ascii"),
         "payloadDigest": "sha256:" + hashlib.sha256(payload).hexdigest(),
     }
@@ -148,7 +145,8 @@ def signed_export(
     result = run_infractl(
         "exports", "emit", *arguments,
         "--signature", str(signature_path),
-        "--trusted-key-id", trusted_key_id or envelope["keyId"],
+        "--trusted-key-version", trusted_key_version or envelope["keyVersion"],
+        "--trusted-public-key-digest", trusted_public_key_digest or envelope["publicKeyDigest"],
         "--output", str(output_path),
     )
     return result, output_path
@@ -334,6 +332,49 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn('"${RUNNER_TEMP}/post-apply.plan.log"', final_cleanup)
         self.assertIn('"${RUNNER_TEMP}/pre-apply.state.json"', final_cleanup)
         self.assertIn('"${RUNNER_TEMP}/post-apply.state.json"', final_cleanup)
+
+    def test_protected_apply_qualifies_kms_before_mutation_and_emits_paired_completion(self):
+        workflow = workflow_source("protected-apply.yml")
+        readiness = workflow_step_source(
+            workflow, "Prove the qualified HSM signer is usable before mutation"
+        )
+        completion = workflow_step_source(
+            workflow, "Create and KMS-sign exact post-apply completion evidence"
+        )
+        upload = workflow_step_source(
+            workflow, "Retain the signed export and bound apply receipt together"
+        )
+
+        self.assertIn(
+            "google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db",
+            workflow,
+        )
+        self.assertIn('version: "568.0.0"', workflow)
+        for environment in ("DEVELOPMENT", "STAGING", "PRODUCTION", "RESTRICTED"):
+            self.assertIn(f"INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_{environment}", workflow)
+            self.assertIn(f"INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_{environment}", workflow)
+            self.assertIn(f"INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_{environment}", workflow)
+        self.assertNotIn("INFRASTRUCTURE_EXPORT_KMS_PUBLIC_KEY_PEM_BASE64", workflow)
+        self.assertLess(
+            workflow.index("Prove the qualified HSM signer is usable before mutation"),
+            workflow.index("Apply only the verified saved plan"),
+        )
+        for required in (
+            "EC_SIGN_P256_SHA256", '(.protectionLevel == "HSM")',
+            '(.state == "ENABLED")', "gcloud kms asymmetric-sign",
+            "exports kms-readiness", "--trusted-public-key-base64",
+        ):
+            self.assertIn(required, readiness)
+        self.assertIn('tofu -chdir="${root}" output -json |', completion)
+        self.assertNotIn("output -json resources", completion)
+        self.assertIn("exports resources", completion)
+        self.assertIn('receipt_digest="sha256:', completion)
+        self.assertIn("--provenance-digest \"${receipt_digest}\"", completion)
+        self.assertIn("exports emit", completion)
+        self.assertIn("--trusted-key-version", completion)
+        self.assertIn("apply-receipt.json infrastructure-export.json", completion)
+        self.assertIn("${{ runner.temp }}/infrastructure-completion/", upload)
+        self.assertIn("compression-level: 0", upload)
 
     def test_drift_evidence_records_policy_outcome_without_policy_contents(self):
         workflow = workflow_source("drift-detection.yml")
@@ -610,10 +651,10 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         ):
             self.assertIn(field, metadata["required"])
         signature = schema["properties"]["spec"]["properties"]["evidence"]["properties"]["signature"]
-        self.assertEqual(signature["properties"]["algorithm"]["const"], "Ed25519")
+        self.assertEqual(signature["properties"]["algorithm"]["const"], "EC_SIGN_P256_SHA256")
         self.assertEqual(
             set(signature["required"]),
-            {"algorithm", "keyId", "publicKey", "value", "payloadDigest"},
+            {"algorithm", "keyVersion", "publicKey", "publicKeyDigest", "value", "payloadDigest"},
         )
 
     def test_service_capabilities_exactly_cover_export_resource_kinds(self):
@@ -624,6 +665,118 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         schema = json.loads((ROOT / "schemas/v1/infrastructure_export.schema.json").read_text(encoding="utf-8"))
         schema_kinds = set(schema["properties"]["spec"]["properties"]["resources"]["items"]["properties"]["kind"]["enum"])
         self.assertEqual(capability_kinds, schema_kinds)
+
+    def test_actual_tofu_outputs_are_strictly_reduced_to_typed_capabilities(self):
+        fixtures = {
+            "foundation": ({"project_id": "mindclade-dev", "project_number": "123456", "enabled_services": []}, {"project"}),
+            "network": ({
+                "network_id": "projects/mindclade-dev/global/networks/platform",
+                "service_project_ids": [],
+                "subnetwork_ids": {"platform-subnet": "projects/mindclade-dev/regions/us-central1/subnetworks/platform-subnet"},
+                "private_service_connection": "servicenetworking-googleapis-com",
+                "private_dns_zone_ids": {},
+                "egress_addresses": {},
+            }, {"network", "subnetwork"}),
+            "artifacts": ({
+                "repository_ids": {"platform-images": "projects/mindclade-dev/locations/us-central1/repositories/platform-images"},
+                "bucket_ids": {},
+                "kms_key_ids": {"artifacts": "projects/mindclade-dev/locations/us-central1/keyRings/platform/cryptoKeys/artifacts"},
+                "ci_evidence_archive": {},
+            }, {"artifact-registry", "kms-key-reference"}),
+            "data-services": ({
+                "database_instance_id": "mindclade-dev/postgres-primary",
+                "database_connection_name": "mindclade-dev:us-central1:postgres-primary",
+                "topic_ids": {}, "subscription_ids": {}, "secret_references": {}, "kms_key_ids": {},
+            }, {"database-instance"}),
+            "clusters": ({
+                "cluster_id": "projects/mindclade-dev/locations/us-central1/clusters/platform",
+                "cluster_name": "platform", "workload_identity_pool": "mindclade-dev.svc.id.goog",
+                "node_pool_ids": {}, "workload_service_accounts": {},
+                "argocd_prerequisite_identity": None, "cluster_membership_ids": {},
+            }, {"gke-cluster", "workload-identity-pool"}),
+            "ci-execution": ({
+                "service_account_email": "ci@mindclade-dev.iam.gserviceaccount.com",
+                "instance_group_id": "projects/mindclade-dev/regions/us-central1/instanceGroupManagers/buildkite-agents",
+            }, {"build-execution-pool"}),
+            "observability": ({
+                "log_bucket_id": "projects/mindclade-dev/locations/global/buckets/platform",
+                "metrics_scope": "mindclade-dev", "sink_writer_identities": {}, "kms_key_ids": {},
+            }, {"log-bucket", "metrics-scope"}),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            for stack, (value, expected_kinds) in fixtures.items():
+                with self.subTest(stack=stack):
+                    input_path = directory / f"{stack}.input.json"
+                    output_path = directory / f"{stack}.resources.json"
+                    input_path.write_text(json.dumps({
+                        "resources": {"sensitive": False, "type": ["object", {}], "value": value},
+                    }), encoding="utf-8")
+                    result = run_infractl(
+                        "exports", "resources", "--stack", stack,
+                        "--input", str(input_path), "--output", str(output_path),
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    resources = json.loads(output_path.read_text(encoding="utf-8"))
+                    self.assertEqual({resource["kind"] for resource in resources}, expected_kinds)
+                    self.assertNotIn("secret", output_path.read_text(encoding="utf-8").lower())
+
+    def test_actual_tofu_output_reduction_fails_closed_on_null_unknown_or_unsafe_values(self):
+        invalid = [
+            {"resources": {"sensitive": True, "type": ["object", {}], "value": {"project_id": "mindclade-dev", "project_number": "1", "enabled_services": []}}},
+            {"resources": {"sensitive": False, "type": ["object", {}], "value": None}},
+            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": None, "project_number": "1", "enabled_services": []}}},
+            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": "mindclade-dev", "project_number": "1", "enabled_services": [], "token": "invented"}}},
+            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": "mindclade-dev?token=x", "project_number": "1", "enabled_services": []}}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            for index, value in enumerate(invalid):
+                with self.subTest(index=index):
+                    input_path = directory / f"invalid-{index}.json"
+                    output_path = directory / f"invalid-{index}.out.json"
+                    input_path.write_text(json.dumps(value), encoding="utf-8")
+                    result = run_infractl(
+                        "exports", "resources", "--stack", "foundation",
+                        "--input", str(input_path), "--output", str(output_path),
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(output_path.exists())
+
+    def test_kms_readiness_binds_qualified_and_observed_p256_keys_and_challenge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            message = b"mindclade infrastructure-export readiness challenge\n"
+            public_der, signature = test_p256_sign(message)
+            encoded = base64.b64encode(public_der).decode("ascii")
+            public_pem = "-----BEGIN PUBLIC KEY-----\n" + "\n".join(
+                encoded[index:index + 64] for index in range(0, len(encoded), 64)
+            ) + "\n-----END PUBLIC KEY-----\n"
+            observed = directory / "observed.pem"
+            challenge = directory / "challenge"
+            detached = directory / "challenge.sig"
+            output_der = directory / "qualified.der"
+            observed.write_text(public_pem, encoding="ascii")
+            challenge.write_bytes(message)
+            detached.write_bytes(signature)
+            trusted_b64 = base64.b64encode(public_pem.encode("ascii")).decode("ascii")
+            digest = "sha256:" + hashlib.sha256(public_der).hexdigest()
+            arguments = [
+                "exports", "kms-readiness",
+                "--trusted-public-key-base64", trusted_b64,
+                "--observed-public-key", str(observed),
+                "--trusted-public-key-digest", digest,
+                "--message", str(challenge), "--signature", str(detached),
+                "--output-public-key-der", str(output_der),
+            ]
+            result = run_infractl(*arguments)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output_der.read_bytes(), public_der)
+            output_der.unlink()
+            arguments[arguments.index(digest)] = "sha256:" + "0" * 64
+            rejected = run_infractl(*arguments)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertFalse(output_der.exists())
 
     def test_export_emission_is_complete_and_canonical(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -637,7 +790,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             self.assertEqual(document["metadata"]["root"], "opentofu/live/development/foundation")
             self.assertEqual(document["metadata"]["backendSerial"], 17)
             self.assertEqual(document["spec"]["resources"][0]["name"], "logical-project")
-            self.assertEqual(document["spec"]["evidence"]["signature"]["algorithm"], "Ed25519")
+            self.assertEqual(document["spec"]["evidence"]["signature"]["algorithm"], "EC_SIGN_P256_SHA256")
 
     def test_export_emission_binds_resource_kinds_to_their_producing_stack(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -669,7 +822,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 ], provenance_uri=provenance_uri)
 
             safe_resource = "//cloudresourcemanager.googleapis.com/projects/logical-project"
-            safe_provenance = "https://evidence.example/provenance/development-foundation"
+            safe_provenance = "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
             invalid_resources = [
                 "//identity@cloudresourcemanager.googleapis.com/projects/logical-project",
                 "//cloudresourcemanager.googleapis.com/projects/logical-project?version=1",
@@ -729,15 +882,15 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 directory, [resource], tamper_payload=invent_reference,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("independently supplied trusted key ID", result.stderr)
+            self.assertIn("independently supplied trusted KMS key version", result.stderr)
             self.assertFalse(output.exists())
 
         with tempfile.TemporaryDirectory() as directory:
             result, output = signed_export(
-                directory, [resource], trusted_key_id="sha256:" + "9" * 64,
+                directory, [resource], trusted_public_key_digest="sha256:" + "9" * 64,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("independently supplied trusted key ID", result.stderr)
+            self.assertIn("independently supplied trusted public-key digest", result.stderr)
             self.assertFalse(output.exists())
 
 

@@ -95,6 +95,14 @@ infractl policy verify --root .
 infractl drift classify --desired desired.json --observed observed.json
 infractl reconciliation verify --desired reviewed-state.json \
   --observed refreshed-state.json
+tofu -chdir="$ROOT" output -json | infractl exports resources \
+  --stack foundation --input - --output resources.json
+infractl exports kms-readiness \
+  --trusted-public-key-base64 "$BOOTSTRAP_EXPORT_PUBLIC_KEY_PEM_B64" \
+  --observed-public-key kms-public-key.pem \
+  --trusted-public-key-digest "$BOOTSTRAP_EXPORT_PUBLIC_KEY_DIGEST" \
+  --message readiness.json --signature readiness.sig \
+  --output-public-key-der qualified-public-key.der
 infractl exports payload --environment development --stack foundation \
   --source-commit "$SOURCE_COMMIT" --plan-digest "$PLAN_DIGEST" \
   --provider-lock-digest "$PROVIDER_LOCK_DIGEST" \
@@ -104,11 +112,13 @@ infractl exports payload --environment development --stack foundation \
   --resources resources.json \
   --provenance-uri "$PROVENANCE_URI" \
   --provenance-digest "$PROVENANCE_DIGEST" --output export.payload.json
-# An independently controlled Ed25519 signer signs export.payload.json and
-# returns the canonical detached-signature JSON envelope.
+# The exact bootstrap-owned infrastructure-export HSM key version signs the
+# canonical payload with EC_SIGN_P256_SHA256.
 infractl exports emit <the-same-immutable-inputs> \
   --signature "$DETACHED_SIGNATURE_JSON" \
-  --trusted-key-id "$BOOTSTRAP_EXPORT_SIGNER_KEY_ID" --output export.json
+  --trusted-key-version "$BOOTSTRAP_EXPORT_KMS_KEY_VERSION" \
+  --trusted-public-key-digest "$BOOTSTRAP_EXPORT_PUBLIC_KEY_DIGEST" \
+  --output export.json
 ```
 
 The named environment variables above are required operator inputs and have no
@@ -119,16 +129,24 @@ backend lineage and serial, resource addresses, provider IDs, and redacted state
 digests; it always requires a new plan after an interrupted apply. Output is
 canonical, machine-readable JSON and omits provider values. Export emission
 requires an explicit evidence timestamp, transient provider-lock digest, exact
-backend state binding, an independently supplied trusted-key ID, and a detached Ed25519 signature that verifies over the
+backend state binding, an independently supplied exact KMS key version and
+canonical SPKI digest, and a detached HSM ECDSA P-256 signature that verifies over the
 canonical metadata, resources, provenance, plan digest, and source commit. It
 writes atomically with owner-only permissions.
 
 The export is the only supported infrastructure-to-GitOps interface. It
 contains resource URIs, never secret values or OpenTofu state. The embedded
 public key proves cryptographic consistency; GitOps must additionally bind its
-key ID to the independently governed bootstrap signing root before it verifies
+key version and SPKI digest to the independently governed bootstrap signing root before it verifies
 schema, signature, provenance, plan, source commit, provider lock, backend state,
 and environment. Source alone does not manufacture that trust binding.
+
+Protected apply derives the export resource list only from the full post-apply
+`tofu output -json` resources envelope, requires that output to be explicitly
+non-sensitive, and rejects null, unknown, empty, or unsafe exported values. It
+re-pulls and compares the exact state around derivation, binds the byte digest of
+the canonical apply receipt as export provenance, locally verifies the KMS
+signature, and uploads only the signed export and bound receipt together.
 
 ## Local verification
 

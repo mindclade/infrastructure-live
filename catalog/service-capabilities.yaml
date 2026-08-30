@@ -11,7 +11,7 @@ serviceCapabilities:
     stateBoundary: per-environment
   - name: artifacts
     requiredApis: [artifactregistry.googleapis.com, cloudkms.googleapis.com, logging.googleapis.com, monitoring.googleapis.com, storage.googleapis.com, storageinsights.googleapis.com]
-    exportKinds: [artifact-registry, artifact-bucket]
+    exportKinds: [artifact-registry, artifact-bucket, kms-key-reference]
     stateBoundary: per-environment
   - name: data-services
     requiredApis: [sqladmin.googleapis.com, pubsub.googleapis.com, secretmanager.googleapis.com, cloudkms.googleapis.com]
@@ -19,7 +19,7 @@ serviceCapabilities:
     stateBoundary: per-environment
   - name: clusters
     requiredApis: [binaryauthorization.googleapis.com, cloudkms.googleapis.com, cloudresourcemanager.googleapis.com, container.googleapis.com, gkehub.googleapis.com, iam.googleapis.com, secretmanager.googleapis.com]
-    exportKinds: [cluster-membership, workload-identity-pool, argocd-prerequisite]
+    exportKinds: [gke-cluster, cluster-membership, workload-identity-pool, argocd-prerequisite]
     stateBoundary: per-environment
   - name: ci-execution
     requiredApis: [cloudresourcemanager.googleapis.com, compute.googleapis.com, iam.googleapis.com, secretmanager.googleapis.com]

@@ -50,9 +50,9 @@ var requiredAPIsByStack = map[string][]string{
 var exportKindsByStack = map[string][]string{
 	"foundation":    {"project"},
 	"network":       {"network", "subnetwork", "private-dns-zone"},
-	"artifacts":     {"artifact-registry", "artifact-bucket"},
+	"artifacts":     {"artifact-registry", "artifact-bucket", "kms-key-reference"},
 	"data-services": {"database-instance", "topic", "kms-key-reference"},
-	"clusters":      {"cluster-membership", "workload-identity-pool", "argocd-prerequisite"},
+	"clusters":      {"gke-cluster", "cluster-membership", "workload-identity-pool", "argocd-prerequisite"},
 	"ci-execution":  {"build-execution-pool"},
 	"observability": {"log-bucket", "metrics-scope"},
 }

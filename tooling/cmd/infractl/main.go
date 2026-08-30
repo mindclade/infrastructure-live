@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -124,6 +125,10 @@ func run(args []string) error {
 		return writeExport(args[2:], true)
 	case "exports payload":
 		return writeExport(args[2:], false)
+	case "exports resources":
+		return writeExportResources(args[2:])
+	case "exports kms-readiness":
+		return verifyKMSReadiness(args[2:])
 	default:
 		return fmt.Errorf("unknown command %q", strings.Join(args[:2], " "))
 	}
@@ -148,8 +153,9 @@ func writeExport(args []string, signed bool) error {
 	resourcesPath := flags.String("resources", "", "JSON resource reference array")
 	provenanceURI := flags.String("provenance-uri", "", "immutable provenance URI")
 	provenanceDigest := flags.String("provenance-digest", "", "provenance SHA-256 digest")
-	signaturePath := flags.String("signature", "", "detached Ed25519 signature envelope JSON")
-	trustedKeyID := flags.String("trusted-key-id", "", "independently supplied trusted Ed25519 public-key digest")
+	signaturePath := flags.String("signature", "", "detached GCP KMS ECDSA signature envelope JSON")
+	trustedKeyVersion := flags.String("trusted-key-version", "", "independently supplied exact GCP KMS key version")
+	trustedPublicKeyDigest := flags.String("trusted-public-key-digest", "", "independently supplied canonical SPKI SHA-256 digest")
 	output := flags.String("output", "", "output JSON path")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -184,8 +190,8 @@ func writeExport(args []string, signed bool) error {
 		}
 		return emit(os.Stdout, map[string]any{"ok": true, "output": *output, "environment": document.Metadata.Environment, "stack": document.Metadata.Stack})
 	}
-	if *signaturePath == "" || *trustedKeyID == "" {
-		return fmt.Errorf("--signature and --trusted-key-id are required for exports emit")
+	if *signaturePath == "" || *trustedKeyVersion == "" || *trustedPublicKeyDigest == "" {
+		return fmt.Errorf("--signature, --trusted-key-version, and --trusted-public-key-digest are required for exports emit")
 	}
 	signatureData, err := os.ReadFile(*signaturePath)
 	if err != nil {
@@ -195,11 +201,95 @@ func writeExport(args []string, signed bool) error {
 	if err := json.Unmarshal(signatureData, &signature); err != nil {
 		return fmt.Errorf("parse detached signature: %w", err)
 	}
-	document, err := exports.Emit(input, signature, *trustedKeyID, *output)
+	document, err := exports.Emit(input, signature, *trustedKeyVersion, *trustedPublicKeyDigest, *output)
 	if err != nil {
 		return err
 	}
 	return emit(os.Stdout, map[string]any{"ok": true, "output": *output, "environment": document.Metadata.Environment, "stack": document.Metadata.Stack})
+}
+
+func writeExportResources(args []string) error {
+	flags := flag.NewFlagSet("exports resources", flag.ContinueOnError)
+	stack := flags.String("stack", "", "stack name")
+	input := flags.String("input", "", "full tofu output -json document, or - for stdin")
+	output := flags.String("output", "", "redacted typed resource array path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *stack == "" || *input == "" || *output == "" {
+		return fmt.Errorf("--stack, --input, and --output are required")
+	}
+	data, err := readBoundedInput(*input, 8*1024*1024)
+	if err != nil {
+		return err
+	}
+	resources, err := exports.WriteResourcesFromOutput(*stack, data, *output)
+	if err != nil {
+		return err
+	}
+	return emit(os.Stdout, map[string]any{"ok": true, "output": *output, "stack": *stack, "resources": len(resources)})
+}
+
+func verifyKMSReadiness(args []string) error {
+	flags := flag.NewFlagSet("exports kms-readiness", flag.ContinueOnError)
+	trustedPublicKey := flags.String("trusted-public-key-base64", "", "bootstrap-qualified PKIX public-key PEM as canonical base64")
+	observedPublicKey := flags.String("observed-public-key", "", "public-key PEM fetched from the exact KMS key version")
+	trustedPublicKeyDigest := flags.String("trusted-public-key-digest", "", "bootstrap-qualified canonical SPKI SHA-256 digest")
+	message := flags.String("message", "", "harmless readiness challenge path")
+	signature := flags.String("signature", "", "detached KMS challenge signature path")
+	outputDER := flags.String("output-public-key-der", "", "qualified canonical SPKI DER output path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *trustedPublicKey == "" || *observedPublicKey == "" || *trustedPublicKeyDigest == "" ||
+		*message == "" || *signature == "" || *outputDER == "" {
+		return fmt.Errorf("exports kms-readiness requires the complete trusted key, observed key, digest, challenge, signature, and DER output set")
+	}
+	observed, err := readBoundedInput(*observedPublicKey, 16*1024)
+	if err != nil {
+		return err
+	}
+	challenge, err := readBoundedInput(*message, 4096)
+	if err != nil {
+		return err
+	}
+	detached, err := readBoundedInput(*signature, 256)
+	if err != nil {
+		return err
+	}
+	if err := exports.VerifyKMSReadiness(*trustedPublicKey, observed, *trustedPublicKeyDigest, challenge, detached, *outputDER); err != nil {
+		return err
+	}
+	return emit(os.Stdout, map[string]any{"ok": true, "algorithm": "EC_SIGN_P256_SHA256", "publicKeyDigest": *trustedPublicKeyDigest})
+}
+
+func readBoundedInput(path string, maximum int64) ([]byte, error) {
+	var reader io.Reader
+	if path == "-" {
+		reader = os.Stdin
+	} else {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() || info.Size() > maximum {
+			return nil, fmt.Errorf("input %s must be a bounded regular file", path)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		reader = file
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || int64(len(data)) > maximum {
+		return nil, fmt.Errorf("input %s must contain 1 to %d bytes", path, maximum)
+	}
+	return data, nil
 }
 
 func emit(writer *os.File, value any) error {

@@ -374,6 +374,9 @@ jobs:
       APPLY_WIF_PROVIDER: ${{ inputs.environment == 'development' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_DEVELOPMENT_APPLY || inputs.environment == 'staging' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_STAGING_APPLY || inputs.environment == 'production' && vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_PRODUCTION_APPLY || vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_RESTRICTED_APPLY }}
       APPLY_SERVICE_ACCOUNT: ${{ inputs.environment == 'development' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_DEVELOPMENT_APPLY || inputs.environment == 'staging' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_STAGING_APPLY || inputs.environment == 'production' && vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_PRODUCTION_APPLY || vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_LIVE_RESTRICTED_APPLY }}
       APPLY_OIDC_AUDIENCE: https://github.mindclade.io/oidc/infrastructure-live/${{ inputs.environment }}/apply
+      EXPORT_KMS_KEY_VERSION: ${{ inputs.environment == 'development' && vars.INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_DEVELOPMENT || inputs.environment == 'staging' && vars.INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_STAGING || inputs.environment == 'production' && vars.INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_PRODUCTION || vars.INFRASTRUCTURE_EXPORT_KMS_KEY_VERSION_RESTRICTED }}
+      EXPORT_KMS_PUBLIC_KEY_PEM_BASE64: ${{ inputs.environment == 'development' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_DEVELOPMENT || inputs.environment == 'staging' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_STAGING || inputs.environment == 'production' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_PRODUCTION || vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_PEM_B64_RESTRICTED }}
+      EXPORT_KMS_PUBLIC_KEY_DIGEST: ${{ inputs.environment == 'development' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_DEVELOPMENT || inputs.environment == 'staging' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_STAGING || inputs.environment == 'production' && vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_PRODUCTION || vars.INFRASTRUCTURE_EXPORT_PUBLIC_KEY_DIGEST_RESTRICTED }}
     steps:
       - name: Select the exact environment apply authority
         shell: bash
@@ -383,12 +386,25 @@ jobs:
           test -n "${STATE_PREFIX}"
           test -n "${APPLY_WIF_PROVIDER}"
           test -n "${APPLY_SERVICE_ACCOUNT}"
+          test -n "${EXPORT_KMS_KEY_VERSION}"
+          test -n "${EXPORT_KMS_PUBLIC_KEY_PEM_BASE64}"
           test "${APPLY_OIDC_AUDIENCE}" = "https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/apply"
           [[ "${STATE_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
           [[ "${STATE_PREFIX}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]]
           [[ "${APPLY_WIF_PROVIDER}" =~ ^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/${ENVIRONMENT}-apply$ ]]
           [[ "${APPLY_SERVICE_ACCOUNT}" =~ ^${ENVIRONMENT}-apply@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]]
-          printf 'APPLY_IDENTITY_BINDING=infrastructure-live-%s-apply\n' "${ENVIRONMENT}" >>"${GITHUB_ENV}"
+          [[ "${EXPORT_KMS_PUBLIC_KEY_PEM_BASE64}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
+          test "${#EXPORT_KMS_PUBLIC_KEY_PEM_BASE64}" -le 22000
+          [[ "${EXPORT_KMS_PUBLIC_KEY_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${EXPORT_KMS_KEY_VERSION}" =~ ^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/locations/(us-central1)/keyRings/(bootstrap-signing)/cryptoKeys/(infrastructure-export)/cryptoKeyVersions/([1-9][0-9]*)$ ]]
+          {
+            printf 'EXPORT_KMS_PROJECT=%s\n' "${BASH_REMATCH[1]}"
+            printf 'EXPORT_KMS_LOCATION=%s\n' "${BASH_REMATCH[2]}"
+            printf 'EXPORT_KMS_KEYRING=%s\n' "${BASH_REMATCH[3]}"
+            printf 'EXPORT_KMS_KEY=%s\n' "${BASH_REMATCH[4]}"
+            printf 'EXPORT_KMS_VERSION=%s\n' "${BASH_REMATCH[5]}"
+            printf 'APPLY_IDENTITY_BINDING=infrastructure-live-%s-apply\n' "${ENVIRONMENT}"
+          } >>"${GITHUB_ENV}"
 
       - name: Check out the exact planned source without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -496,6 +512,63 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
+      - name: Install the exact Google Cloud SDK for KMS operations
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          version: "568.0.0"
+
+      - name: Prove the qualified HSM signer is usable before mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          metadata="${RUNNER_TEMP}/export-kms-version.json"
+          observed_key="${RUNNER_TEMP}/export-kms-public-key.pem"
+          challenge="${RUNNER_TEMP}/export-kms-readiness.json"
+          challenge_signature="${RUNNER_TEMP}/export-kms-readiness.sig"
+          qualified_der="${RUNNER_TEMP}/export-kms-public-key.der"
+          gcloud kms keys versions describe "${EXPORT_KMS_VERSION}" \
+            --project="${EXPORT_KMS_PROJECT}" \
+            --location="${EXPORT_KMS_LOCATION}" \
+            --keyring="${EXPORT_KMS_KEYRING}" \
+            --key="${EXPORT_KMS_KEY}" \
+            --format=json >"${metadata}"
+          jq -e \
+            --arg name "${EXPORT_KMS_KEY_VERSION}" \
+            '(.name == $name) and (.algorithm == "EC_SIGN_P256_SHA256") and (.protectionLevel == "HSM") and (.state == "ENABLED")' \
+            "${metadata}" >/dev/null
+          gcloud kms keys versions get-public-key "${EXPORT_KMS_VERSION}" \
+            --project="${EXPORT_KMS_PROJECT}" \
+            --location="${EXPORT_KMS_LOCATION}" \
+            --keyring="${EXPORT_KMS_KEYRING}" \
+            --key="${EXPORT_KMS_KEY}" \
+            --output-file="${observed_key}"
+          jq -cn \
+            --arg purpose "infrastructure-export-pre-apply-readiness" \
+            --arg environment "${ENVIRONMENT}" \
+            --arg stack "${STACK}" \
+            --arg sourceCommit "${SOURCE_COMMIT}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            '{purpose: $purpose, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, runId: $runId, runAttempt: $runAttempt}' \
+            >"${challenge}"
+          gcloud kms asymmetric-sign \
+            --project="${EXPORT_KMS_PROJECT}" \
+            --location="${EXPORT_KMS_LOCATION}" \
+            --keyring="${EXPORT_KMS_KEYRING}" \
+            --key="${EXPORT_KMS_KEY}" \
+            --version="${EXPORT_KMS_VERSION}" \
+            --digest-algorithm=sha256 \
+            --input-file="${challenge}" \
+            --signature-file="${challenge_signature}"
+          "${RUNNER_TEMP}/infractl" exports kms-readiness \
+            --trusted-public-key-base64 "${EXPORT_KMS_PUBLIC_KEY_PEM_BASE64}" \
+            --observed-public-key "${observed_key}" \
+            --trusted-public-key-digest "${EXPORT_KMS_PUBLIC_KEY_DIGEST}" \
+            --message "${challenge}" \
+            --signature "${challenge_signature}" \
+            --output-public-key-der "${qualified_der}"
+
       - name: Recheck provider lock and exact backend serial before apply
         shell: bash
         run: |
@@ -569,16 +642,43 @@ jobs:
           printf '::error::Post-apply drift was detected; only the redacted classification is shown.\n'
           exit 2
 
-      - name: Create a redacted exact-state apply receipt
+      - name: Create and KMS-sign exact post-apply completion evidence
         shell: bash
         run: |
           set -euo pipefail
           umask 077
           bundle="${RUNNER_TEMP}/plan-bundle/bundle.json"
+          root="opentofu/live/${ENVIRONMENT}/${STACK}"
+          completion="${RUNNER_TEMP}/infrastructure-completion"
+          resources="${RUNNER_TEMP}/capability-resources.json"
+          state_before="${RUNNER_TEMP}/completion-before.state.json"
+          state_after="${RUNNER_TEMP}/completion-after.state.json"
+          payload="${RUNNER_TEMP}/infrastructure-export.payload.json"
+          detached_signature="${RUNNER_TEMP}/infrastructure-export.sig"
+          signature_envelope="${RUNNER_TEMP}/infrastructure-export.signature.json"
+          public_key_der="${RUNNER_TEMP}/export-kms-public-key.der"
+          export TF_DATA_DIR="${RUNNER_TEMP}/tofu-apply-data"
+          mkdir -m 0700 "${completion}"
+          test -f "${public_key_der}"
+          test ! -L "${public_key_der}"
+          tofu -chdir="${root}" state pull >"${state_before}" 2>>"${RUNNER_TEMP}/state-pull.log"
+          tofu -chdir="${root}" output -json | \
+            "${RUNNER_TEMP}/infractl" exports resources \
+              --stack "${STACK}" --input - --output "${resources}"
+          tofu -chdir="${root}" state pull >"${state_after}" 2>>"${RUNNER_TEMP}/state-pull.log"
+          test "$(jq -er '.lineage' "${state_before}")" = "$(jq -er '.lineage' "${state_after}")"
+          test "$(jq -er '.serial | numbers' "${state_before}")" = "$(jq -er '.serial | numbers' "${state_after}")"
+          before_digest="sha256:$(jq -cS . "${state_before}" | sha256sum | awk '{print $1}')"
+          final_state_digest="sha256:$(jq -cS . "${state_after}" | sha256sum | awk '{print $1}')"
+          test "${before_digest}" = "${final_state_digest}"
           prior_serial="$(jq -er '.backendSerial' "${bundle}")"
-          final_serial="$(jq -er '.serial | numbers' "${RUNNER_TEMP}/post-apply.state.json")"
-          final_state_digest="sha256:$(jq -cS . "${RUNNER_TEMP}/post-apply.state.json" | sha256sum | awk '{print $1}')"
-          jq -n \
+          final_serial="$(jq -er '.serial | numbers' "${state_after}")"
+          test "${final_serial}" -gt "${prior_serial}"
+          test "$(jq -er '.lineage' "${state_after}")" = "$(jq -er '.backendLineage' "${bundle}")"
+          applied_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          capability_resources_digest="sha256:$(sha256sum "${resources}" | awk '{print $1}')"
+          provenance_uri="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          jq -cn \
             --arg apiVersion "infrastructure.mindclade.dev/apply-receipt/v1" \
             --arg environment "${ENVIRONMENT}" \
             --arg stack "${STACK}" \
@@ -595,22 +695,73 @@ jobs:
             --arg resourceReferencesDigest "$(jq -er '.resourceReferencesDigest' "${bundle}")" \
             --arg planIdentityBinding "$(jq -er '.planIdentityBinding' "${bundle}")" \
             --arg applyIdentityBinding "${APPLY_IDENTITY_BINDING}" \
+            --arg capabilityResourcesDigest "${capability_resources_digest}" \
+            --arg exportKmsKeyVersion "${EXPORT_KMS_KEY_VERSION}" \
+            --arg exportPublicKeyDigest "${EXPORT_KMS_PUBLIC_KEY_DIGEST}" \
             --arg changeReference "${CHANGE_REFERENCE}" \
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg appliedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg appliedAt "${applied_at}" \
             --argjson priorBackendSerial "${prior_serial}" \
             --argjson finalBackendSerial "${final_serial}" \
-            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, savedPlanDigest: $savedPlanDigest, providerLockDigest: $providerLockDigest, backendLineage: $backendLineage, priorBackendSerial: $priorBackendSerial, finalBackendSerial: $finalBackendSerial, priorBackendStateDigest: $priorBackendStateDigest, finalBackendStateDigest: $finalBackendStateDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, planIdentityBinding: $planIdentityBinding, applyIdentityBinding: $applyIdentityBinding, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, appliedAt: $appliedAt}' \
-            >"${RUNNER_TEMP}/apply.receipt.json"
+            '{apiVersion: $apiVersion, environment: $environment, stack: $stack, sourceCommit: $sourceCommit, planDigest: $planDigest, savedPlanDigest: $savedPlanDigest, providerLockDigest: $providerLockDigest, backendLineage: $backendLineage, priorBackendSerial: $priorBackendSerial, finalBackendSerial: $finalBackendSerial, priorBackendStateDigest: $priorBackendStateDigest, finalBackendStateDigest: $finalBackendStateDigest, classificationDigest: $classificationDigest, policyDigest: $policyDigest, iamPrincipalsDigest: $iamPrincipalsDigest, resourceReferencesDigest: $resourceReferencesDigest, capabilityResourcesDigest: $capabilityResourcesDigest, planIdentityBinding: $planIdentityBinding, applyIdentityBinding: $applyIdentityBinding, exportKmsKeyVersion: $exportKmsKeyVersion, exportPublicKeyDigest: $exportPublicKeyDigest, changeReference: $changeReference, runId: $runId, runAttempt: $runAttempt, appliedAt: $appliedAt}' \
+            >"${completion}/apply-receipt.json"
+          receipt_digest="sha256:$(sha256sum "${completion}/apply-receipt.json" | awk '{print $1}')"
+          schema_digest="sha256:$(sha256sum schemas/v1/infrastructure_export.schema.json | awk '{print $1}')"
+          export_arguments=(
+            --environment "${ENVIRONMENT}"
+            --stack "${STACK}"
+            --source-commit "${SOURCE_COMMIT}"
+            --plan-digest "${REVIEWED_PLAN_DIGEST}"
+            --provider-lock-digest "$(jq -er '.providerLockDigest' "${bundle}")"
+            --backend-state-digest "${final_state_digest}"
+            --backend-lineage "$(jq -er '.backendLineage' "${bundle}")"
+            --backend-serial "${final_serial}"
+            --schema-digest "${schema_digest}"
+            --generated-at "${applied_at}"
+            --resources "${resources}"
+            --provenance-uri "${provenance_uri}"
+            --provenance-digest "${receipt_digest}"
+          )
+          "${RUNNER_TEMP}/infractl" exports payload \
+            "${export_arguments[@]}" --output "${payload}"
+          gcloud kms asymmetric-sign \
+            --project="${EXPORT_KMS_PROJECT}" \
+            --location="${EXPORT_KMS_LOCATION}" \
+            --keyring="${EXPORT_KMS_KEYRING}" \
+            --key="${EXPORT_KMS_KEY}" \
+            --version="${EXPORT_KMS_VERSION}" \
+            --digest-algorithm=sha256 \
+            --input-file="${payload}" \
+            --signature-file="${detached_signature}"
+          jq -cn \
+            --arg algorithm "EC_SIGN_P256_SHA256" \
+            --arg keyVersion "${EXPORT_KMS_KEY_VERSION}" \
+            --arg publicKey "$(base64 -w 0 "${public_key_der}")" \
+            --arg publicKeyDigest "${EXPORT_KMS_PUBLIC_KEY_DIGEST}" \
+            --arg value "$(base64 -w 0 "${detached_signature}")" \
+            --arg payloadDigest "sha256:$(sha256sum "${payload}" | awk '{print $1}')" \
+            '{algorithm: $algorithm, keyVersion: $keyVersion, publicKey: $publicKey, publicKeyDigest: $publicKeyDigest, value: $value, payloadDigest: $payloadDigest}' \
+            >"${signature_envelope}"
+          "${RUNNER_TEMP}/infractl" exports emit \
+            "${export_arguments[@]}" \
+            --signature "${signature_envelope}" \
+            --trusted-key-version "${EXPORT_KMS_KEY_VERSION}" \
+            --trusted-public-key-digest "${EXPORT_KMS_PUBLIC_KEY_DIGEST}" \
+            --output "${completion}/infrastructure-export.json"
+          expected_files="apply-receipt.json infrastructure-export.json"
+          actual_files="$(find "${completion}" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          test "${actual_files}" = "${expected_files}"
+          test -z "$(find "${completion}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
 
-      - name: Retain the redacted receipt
+      - name: Retain the signed export and bound apply receipt together
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: apply-receipt-${{ inputs.environment }}-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/apply.receipt.json
+          name: infrastructure-completion-${{ inputs.environment }}-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/infrastructure-completion/
           if-no-files-found: error
           retention-days: 90
+          compression-level: 0
 
       - name: Remove transient plan material
         if: always()
@@ -620,7 +771,17 @@ jobs:
           root="opentofu/live/${ENVIRONMENT}/${STACK}"
           rm -f \
             "${root}/.terraform.lock.hcl" \
-            "${RUNNER_TEMP}/apply.receipt.json" \
+            "${RUNNER_TEMP}/capability-resources.json" \
+            "${RUNNER_TEMP}/completion-before.state.json" \
+            "${RUNNER_TEMP}/completion-after.state.json" \
+            "${RUNNER_TEMP}/export-kms-version.json" \
+            "${RUNNER_TEMP}/export-kms-public-key.pem" \
+            "${RUNNER_TEMP}/export-kms-public-key.der" \
+            "${RUNNER_TEMP}/export-kms-readiness.json" \
+            "${RUNNER_TEMP}/export-kms-readiness.sig" \
+            "${RUNNER_TEMP}/infrastructure-export.payload.json" \
+            "${RUNNER_TEMP}/infrastructure-export.sig" \
+            "${RUNNER_TEMP}/infrastructure-export.signature.json" \
             "${RUNNER_TEMP}/pre-apply.state.json" \
             "${RUNNER_TEMP}/post-apply.state.json" \
             "${RUNNER_TEMP}/post-apply.tfplan" \
@@ -629,4 +790,7 @@ jobs:
             "${RUNNER_TEMP}/post-apply.classification.json" \
             "${RUNNER_TEMP}/tofu-init.log" \
             "${RUNNER_TEMP}/state-pull.log"
-          rm -rf "${RUNNER_TEMP}/plan-bundle" "${RUNNER_TEMP}/tofu-apply-data"
+          rm -rf \
+            "${RUNNER_TEMP}/infrastructure-completion" \
+            "${RUNNER_TEMP}/plan-bundle" \
+            "${RUNNER_TEMP}/tofu-apply-data"

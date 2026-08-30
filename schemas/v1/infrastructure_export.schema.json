@@ -41,7 +41,7 @@
             "additionalProperties": false,
             "required": ["kind", "name", "uri"],
             "properties": {
-              "kind": {"enum": ["project", "network", "subnetwork", "private-dns-zone", "artifact-registry", "artifact-bucket", "database-instance", "topic", "kms-key-reference", "cluster-membership", "workload-identity-pool", "build-execution-pool", "log-bucket", "metrics-scope", "argocd-prerequisite"]},
+              "kind": {"enum": ["project", "network", "subnetwork", "private-dns-zone", "artifact-registry", "artifact-bucket", "database-instance", "topic", "kms-key-reference", "gke-cluster", "cluster-membership", "workload-identity-pool", "build-execution-pool", "log-bucket", "metrics-scope", "argocd-prerequisite"]},
               "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,126}$"},
               "uri": {
                 "type": "string",
@@ -60,12 +60,13 @@
             "signature": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["algorithm", "keyId", "publicKey", "value", "payloadDigest"],
+              "required": ["algorithm", "keyVersion", "publicKey", "publicKeyDigest", "value", "payloadDigest"],
               "properties": {
-                "algorithm": {"const": "Ed25519"},
-                "keyId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-                "publicKey": {"type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$"},
-                "value": {"type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$"},
+                "algorithm": {"const": "EC_SIGN_P256_SHA256"},
+                "keyVersion": {"type": "string", "pattern": "^projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]{5,})/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/[1-9][0-9]*$"},
+                "publicKey": {"type": "string", "pattern": "^[A-Za-z0-9+/]{122}==$"},
+                "publicKeyDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "value": {"type": "string", "minLength": 12, "maxLength": 344, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
                 "payloadDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
               }
             },
@@ -84,7 +85,7 @@
         "uri": {
           "type": "string",
           "maxLength": 2048,
-          "pattern": "^https://[^/?#@\\s]+/[^?#\\s]+$"
+          "pattern": "^https://github\\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$"
         },
         "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
       }

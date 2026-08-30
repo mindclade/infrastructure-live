@@ -2,12 +2,18 @@
 package exports
 
 import (
-	"crypto/ed25519"
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -25,12 +31,44 @@ const (
 )
 
 var (
-	commitPattern  = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	digestPattern  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	commitPattern     = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	digestPattern     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	keyVersionPattern = regexp.MustCompile(
+		`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]{5,})/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/[1-9][0-9]*$`,
+	)
 	lineagePattern = regexp.MustCompile(
 		`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
 	)
-	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,126}$`)
+	namePattern           = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,126}$`)
+	projectIDPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	providerIDPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~%+:/-]*$`)
+	provenancePattern     = regexp.MustCompile(`^https://github\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$`)
+	bucketPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
+	locationPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
+	serviceAccountPattern = regexp.MustCompile(
+		`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`,
+	)
+	providerPathPatterns = map[string]*regexp.Regexp{
+		"network":              regexp.MustCompile(`^projects/[^/]+/global/networks/[^/]+$`),
+		"subnetwork":           regexp.MustCompile(`^projects/[^/]+/regions/[^/]+/subnetworks/[^/]+$`),
+		"private-dns-zone":     regexp.MustCompile(`^projects/[^/]+/managedZones/[^/]+$`),
+		"artifact-registry":    regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/repositories/[^/]+$`),
+		"database-instance":    regexp.MustCompile(`^projects/[^/]+/instances/[^/]+$`),
+		"topic":                regexp.MustCompile(`^projects/[^/]+/topics/[^/]+$`),
+		"kms-key-reference":    regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$`),
+		"gke-cluster":          regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/clusters/[^/]+$`),
+		"cluster-membership":   regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/memberships/[^/]+$`),
+		"build-execution-pool": regexp.MustCompile(`^projects/[^/]+/regions/[^/]+/instanceGroupManagers/[^/]+$`),
+		"log-bucket":           regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/buckets/[^/]+$`),
+	}
+	providerHosts = map[string]string{
+		"network": "compute.googleapis.com", "subnetwork": "compute.googleapis.com",
+		"private-dns-zone": "dns.googleapis.com", "artifact-registry": "artifactregistry.googleapis.com",
+		"database-instance": "sqladmin.googleapis.com", "topic": "pubsub.googleapis.com",
+		"kms-key-reference": "cloudkms.googleapis.com", "gke-cluster": "container.googleapis.com",
+		"cluster-membership": "gkehub.googleapis.com", "build-execution-pool": "compute.googleapis.com",
+		"log-bucket": "logging.googleapis.com",
+	}
 	rootPattern = regexp.MustCompile(`^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$`)
 )
 
@@ -63,14 +101,16 @@ type Reference struct {
 	Digest string `json:"digest"`
 }
 
-// Signature is a detached Ed25519 signature over the canonical signed payload.
-// The key identifier is the SHA-256 digest of the decoded 32-byte public key.
+// Signature is a detached GCP KMS HSM ECDSA P-256 signature over the canonical
+// signed payload. KeyVersion and PublicKeyDigest are independently qualified
+// bootstrap coordinates, while PublicKey embeds canonical PKIX SPKI DER.
 type Signature struct {
-	Algorithm     string `json:"algorithm"`
-	KeyID         string `json:"keyId"`
-	PublicKey     string `json:"publicKey"`
-	Value         string `json:"value"`
-	PayloadDigest string `json:"payloadDigest"`
+	Algorithm       string `json:"algorithm"`
+	KeyVersion      string `json:"keyVersion"`
+	PublicKey       string `json:"publicKey"`
+	PublicKeyDigest string `json:"publicKeyDigest"`
+	Value           string `json:"value"`
+	PayloadDigest   string `json:"payloadDigest"`
 }
 
 type Evidence struct {
@@ -110,8 +150,240 @@ type signedPayload struct {
 	Spec       signedSpec `json:"spec"`
 }
 
+type foundationOutput struct {
+	ProjectID       *string         `json:"project_id"`
+	ProjectNumber   json.RawMessage `json:"project_number"`
+	EnabledServices json.RawMessage `json:"enabled_services"`
+}
+
+type networkOutput struct {
+	NetworkID                *string           `json:"network_id"`
+	ServiceProjectIDs        json.RawMessage   `json:"service_project_ids"`
+	SubnetworkIDs            map[string]string `json:"subnetwork_ids"`
+	PrivateServiceConnection json.RawMessage   `json:"private_service_connection"`
+	PrivateDNSZoneIDs        map[string]string `json:"private_dns_zone_ids"`
+	EgressAddresses          json.RawMessage   `json:"egress_addresses"`
+}
+
+type artifactsOutput struct {
+	RepositoryIDs     map[string]string `json:"repository_ids"`
+	BucketIDs         map[string]string `json:"bucket_ids"`
+	KMSKeyIDs         map[string]string `json:"kms_key_ids"`
+	CIEvidenceArchive json.RawMessage   `json:"ci_evidence_archive"`
+}
+
+type dataServicesOutput struct {
+	DatabaseInstanceID     *string           `json:"database_instance_id"`
+	DatabaseConnectionName *string           `json:"database_connection_name"`
+	TopicIDs               map[string]string `json:"topic_ids"`
+	SubscriptionIDs        json.RawMessage   `json:"subscription_ids"`
+	SecretReferences       json.RawMessage   `json:"secret_references"`
+	KMSKeyIDs              map[string]string `json:"kms_key_ids"`
+}
+
+type clustersOutput struct {
+	ClusterID                  *string           `json:"cluster_id"`
+	ClusterName                json.RawMessage   `json:"cluster_name"`
+	WorkloadIdentityPool       *string           `json:"workload_identity_pool"`
+	NodePoolIDs                json.RawMessage   `json:"node_pool_ids"`
+	WorkloadServiceAccounts    json.RawMessage   `json:"workload_service_accounts"`
+	ArgoCDPrerequisiteIdentity *string           `json:"argocd_prerequisite_identity"`
+	ClusterMembershipIDs       map[string]string `json:"cluster_membership_ids"`
+}
+
+type ciExecutionOutput struct {
+	ServiceAccountEmail json.RawMessage `json:"service_account_email"`
+	InstanceGroupID     *string         `json:"instance_group_id"`
+}
+
+type observabilityOutput struct {
+	LogBucketID          *string         `json:"log_bucket_id"`
+	MetricsScope         *string         `json:"metrics_scope"`
+	SinkWriterIdentities json.RawMessage `json:"sink_writer_identities"`
+	KMSKeyIDs            json.RawMessage `json:"kms_key_ids"`
+}
+
+type tofuOutputEnvelope struct {
+	Sensitive *bool           `json:"sensitive"`
+	Type      json.RawMessage `json:"type"`
+	Value     json.RawMessage `json:"value"`
+}
+
+// ResourcesFromOutput converts the exact resources envelope from full
+// `tofu output -json` into provider-free capability references. The full form
+// is required so a sensitive or null resources output can never be mistaken
+// for a safe value. Ignored provider values are never copied.
+func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
+	if !validStacks[stack] {
+		return nil, fmt.Errorf("invalid stack for resource derivation")
+	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return nil, err
+	}
+	value, err := exactResourcesValue(data)
+	if err != nil {
+		return nil, err
+	}
+	resources := []Resource{}
+	switch stack {
+	case "foundation":
+		var output foundationOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			var projectID string
+			projectID, err = requiredString(output.ProjectID, "project_id")
+			if err == nil && !projectIDPattern.MatchString(projectID) {
+				err = fmt.Errorf("project_id is not a canonical GCP project ID")
+			}
+			if err == nil {
+				resources = append(resources, Resource{Kind: "project", Name: projectID, URI: "//cloudresourcemanager.googleapis.com/projects/" + projectID})
+			}
+		}
+	case "network":
+		var output networkOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendSingleton(resources, "network", "compute.googleapis.com", output.NetworkID)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "subnetwork", "compute.googleapis.com", output.SubnetworkIDs)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "private-dns-zone", "dns.googleapis.com", output.PrivateDNSZoneIDs)
+		}
+	case "artifacts":
+		var output artifactsOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendResourceMap(resources, "artifact-registry", "artifactregistry.googleapis.com", output.RepositoryIDs)
+		}
+		if err == nil {
+			resources, err = appendBucketMap(resources, output.BucketIDs)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "kms-key-reference", "cloudkms.googleapis.com", output.KMSKeyIDs)
+		}
+	case "data-services":
+		var output dataServicesOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendDatabaseInstance(resources, output.DatabaseInstanceID, output.DatabaseConnectionName)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "topic", "pubsub.googleapis.com", output.TopicIDs)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "kms-key-reference", "cloudkms.googleapis.com", output.KMSKeyIDs)
+		}
+	case "clusters":
+		var output clustersOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendSingleton(resources, "gke-cluster", "container.googleapis.com", output.ClusterID)
+		}
+		if err == nil {
+			resources, err = appendResourceMap(resources, "cluster-membership", "gkehub.googleapis.com", output.ClusterMembershipIDs)
+		}
+		if err == nil {
+			var workloadPool string
+			workloadPool, err = requiredString(output.WorkloadIdentityPool, "workload_identity_pool")
+			parts := strings.Split(workloadPool, ".svc.id.goog")
+			if err == nil && (len(parts) != 2 || parts[1] != "" || !projectIDPattern.MatchString(parts[0])) {
+				err = fmt.Errorf("workload_identity_pool is not a canonical GKE workload pool")
+			}
+			if err == nil {
+				resources = append(resources, Resource{Kind: "workload-identity-pool", Name: "gke-workload-identity", URI: "//container.googleapis.com/workloadIdentityPools/" + workloadPool})
+			}
+		}
+		if err == nil && output.ArgoCDPrerequisiteIdentity != nil {
+			var identity string
+			identity, err = requiredString(output.ArgoCDPrerequisiteIdentity, "argocd_prerequisite_identity")
+			if err == nil && !serviceAccountPattern.MatchString(identity) {
+				err = fmt.Errorf("argocd_prerequisite_identity is not a canonical service-account email")
+			}
+			if err == nil {
+				resources = append(resources, Resource{Kind: "argocd-prerequisite", Name: "argocd-controller", URI: "//iam.googleapis.com/projects/-/serviceAccounts/" + identity})
+			}
+		}
+	case "ci-execution":
+		var output ciExecutionOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendSingleton(resources, "build-execution-pool", "compute.googleapis.com", output.InstanceGroupID)
+		}
+	case "observability":
+		var output observabilityOutput
+		if err = decodeExactOutput(value, &output); err == nil {
+			resources, err = appendSingleton(resources, "log-bucket", "logging.googleapis.com", output.LogBucketID)
+		}
+		if err == nil {
+			var projectID string
+			projectID, err = requiredString(output.MetricsScope, "metrics_scope")
+			if err == nil && !projectIDPattern.MatchString(projectID) {
+				err = fmt.Errorf("metrics_scope is not a canonical GCP project ID")
+			}
+			if err == nil {
+				resources = append(resources, Resource{Kind: "metrics-scope", Name: "metrics-scope", URI: "//monitoring.googleapis.com/locations/global/metricsScopes/" + projectID})
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(resources) == 0 {
+		return nil, fmt.Errorf("actual resources output contains no exportable capability resources")
+	}
+	sortResources(resources)
+	return resources, nil
+}
+
+// WriteResourcesFromOutput atomically writes only the redacted, typed resource array.
+func WriteResourcesFromOutput(stack string, data []byte, output string) ([]Resource, error) {
+	resources, err := ResourcesFromOutput(stack, data)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(resources)
+	if err != nil {
+		return nil, err
+	}
+	if err := atomicWrite(output, append(encoded, '\n')); err != nil {
+		return nil, err
+	}
+	return resources, nil
+}
+
+// VerifyKMSReadiness binds the bootstrap-qualified public key to the exact key
+// freshly observed from KMS and verifies a harmless pre-apply challenge signature.
+// It writes canonical SPKI DER for later inclusion in the signed export envelope.
+func VerifyKMSReadiness(trustedPEMBase64 string, observedPEM []byte, trustedDigest string, message, signature []byte, outputDER string) error {
+	trustedPEM, err := base64.StdEncoding.Strict().DecodeString(trustedPEMBase64)
+	if err != nil || base64.StdEncoding.EncodeToString(trustedPEM) != trustedPEMBase64 {
+		return fmt.Errorf("bootstrap-qualified public key must be canonical base64")
+	}
+	trustedDER, trustedKey, err := parseP256PublicKey(trustedPEM, "bootstrap-qualified")
+	if err != nil {
+		return err
+	}
+	observedDER, observedKey, err := parseP256PublicKey(observedPEM, "KMS-observed")
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare(trustedDER, observedDER) != 1 ||
+		trustedKey.X.Cmp(observedKey.X) != 0 || trustedKey.Y.Cmp(observedKey.Y) != 0 {
+		return fmt.Errorf("KMS-observed public key does not match the bootstrap-qualified key")
+	}
+	digest := sha256.Sum256(trustedDER)
+	actualDigest := "sha256:" + hex.EncodeToString(digest[:])
+	if !digestPattern.MatchString(trustedDigest) || subtle.ConstantTimeCompare([]byte(trustedDigest), []byte(actualDigest)) != 1 {
+		return fmt.Errorf("canonical SPKI public-key digest does not match bootstrap qualification")
+	}
+	if len(message) == 0 || len(message) > 4096 || len(signature) < 8 || len(signature) > 256 {
+		return fmt.Errorf("readiness challenge or signature has an invalid length")
+	}
+	messageDigest := sha256.Sum256(message)
+	if !ecdsa.VerifyASN1(observedKey, messageDigest[:], signature) {
+		return fmt.Errorf("KMS readiness challenge signature verification failed")
+	}
+	return atomicWrite(outputDER, trustedDER)
+}
+
 // CanonicalPayload returns the exact bytes that an independently controlled
-// Ed25519 signer must sign. The payload binds metadata, resource references,
+// GCP KMS signer must sign. The payload binds metadata, resource references,
 // provenance, the source commit, saved-plan digest, provider lock, and backend state.
 func CanonicalPayload(input Input) ([]byte, Document, error) {
 	document := Document{
@@ -147,15 +419,20 @@ func WritePayload(input Input, output string) (Document, error) {
 }
 
 // Emit verifies an actual detached signature against an independently supplied
-// trusted key identifier and writes canonical compact JSON atomically.
-func Emit(input Input, signature Signature, trustedKeyID, output string) (Document, error) {
+// exact KMS key version and public-key digest, then writes canonical compact JSON atomically.
+func Emit(input Input, signature Signature, trustedKeyVersion, trustedPublicKeyDigest, output string) (Document, error) {
 	_, document, err := CanonicalPayload(input)
 	if err != nil {
 		return Document{}, err
 	}
 	document.Spec.Evidence.Signature = signature
-	if !digestPattern.MatchString(trustedKeyID) || signature.KeyID != trustedKeyID {
-		return Document{}, fmt.Errorf("signature keyId does not match the independently supplied trusted key ID")
+	if !keyVersionPattern.MatchString(trustedKeyVersion) ||
+		subtle.ConstantTimeCompare([]byte(signature.KeyVersion), []byte(trustedKeyVersion)) != 1 {
+		return Document{}, fmt.Errorf("signature keyVersion does not match the independently supplied trusted KMS key version")
+	}
+	if !digestPattern.MatchString(trustedPublicKeyDigest) ||
+		subtle.ConstantTimeCompare([]byte(signature.PublicKeyDigest), []byte(trustedPublicKeyDigest)) != 1 {
+		return Document{}, fmt.Errorf("signature publicKeyDigest does not match the independently supplied trusted public-key digest")
 	}
 	if err := Validate(document); err != nil {
 		return Document{}, err
@@ -181,29 +458,44 @@ func Validate(document Document) error {
 		return err
 	}
 	signature := document.Spec.Evidence.Signature
-	if signature.Algorithm != "Ed25519" {
-		return fmt.Errorf("signature algorithm must be Ed25519")
+	if signature.Algorithm != "EC_SIGN_P256_SHA256" {
+		return fmt.Errorf("signature algorithm must be EC_SIGN_P256_SHA256")
 	}
-	publicKey, err := decodeCanonicalBase64(signature.PublicKey, ed25519.PublicKeySize, "signature public key")
+	if !keyVersionPattern.MatchString(signature.KeyVersion) {
+		return fmt.Errorf("signature keyVersion must be the exact bootstrap infrastructure-export key version")
+	}
+	publicKeyDER, err := decodeCanonicalBase64Range(signature.PublicKey, 64, 512, "signature public key")
 	if err != nil {
 		return err
 	}
-	signatureValue, err := decodeCanonicalBase64(signature.Value, ed25519.SignatureSize, "signature value")
+	parsedKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	if err != nil {
+		return fmt.Errorf("signature public key must be canonical PKIX SubjectPublicKeyInfo: %w", err)
+	}
+	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
+	if !ok || publicKey.Curve != elliptic.P256() {
+		return fmt.Errorf("signature public key must be ECDSA P-256")
+	}
+	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil || subtle.ConstantTimeCompare(canonicalDER, publicKeyDER) != 1 {
+		return fmt.Errorf("signature public key must use canonical PKIX SubjectPublicKeyInfo DER")
+	}
+	signatureValue, err := decodeCanonicalBase64Range(signature.Value, 8, 256, "signature value")
 	if err != nil {
 		return err
 	}
-	keyDigest := sha256.Sum256(publicKey)
-	expectedKeyID := "sha256:" + hex.EncodeToString(keyDigest[:])
-	if signature.KeyID != expectedKeyID {
-		return fmt.Errorf("signature keyId does not match the public key")
+	keyDigest := sha256.Sum256(publicKeyDER)
+	expectedPublicKeyDigest := "sha256:" + hex.EncodeToString(keyDigest[:])
+	if subtle.ConstantTimeCompare([]byte(signature.PublicKeyDigest), []byte(expectedPublicKeyDigest)) != 1 {
+		return fmt.Errorf("signature publicKeyDigest does not match the embedded public key")
 	}
 	payloadHash := sha256.Sum256(payload)
 	expectedPayloadDigest := "sha256:" + hex.EncodeToString(payloadHash[:])
 	if signature.PayloadDigest != expectedPayloadDigest {
 		return fmt.Errorf("signature payloadDigest does not match the canonical export payload")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(publicKey), payload, signatureValue) {
-		return fmt.Errorf("Ed25519 signature verification failed")
+	if !ecdsa.VerifyASN1(publicKey, payloadHash[:], signatureValue) {
+		return fmt.Errorf("GCP KMS ECDSA P-256 signature verification failed")
 	}
 	return nil
 }
@@ -243,7 +535,7 @@ func validateUnsigned(document Document) error {
 		if !catalog.AllowsExportKind(metadata.Stack, resource.Kind) {
 			return fmt.Errorf("resource kind %q is not allowed for stack %q", resource.Kind, metadata.Stack)
 		}
-		if !namePattern.MatchString(resource.Name) || !safeResourceURI(resource.URI) {
+		if !namePattern.MatchString(resource.Name) || !safeResourceURI(resource.URI) || !validCapabilityResourceURI(resource.Kind, resource.URI) {
 			return fmt.Errorf("every resource requires kind, name, and a safe URI")
 		}
 		identity := resource.Kind + "\x00" + resource.Name
@@ -253,7 +545,7 @@ func validateUnsigned(document Document) error {
 		seen[identity] = true
 	}
 	provenance := document.Spec.Evidence.Provenance
-	if !safeEvidenceURI(provenance.URI) || !digestPattern.MatchString(provenance.Digest) {
+	if !safeEvidenceURI(provenance.URI) || !provenancePattern.MatchString(provenance.URI) || !digestPattern.MatchString(provenance.Digest) {
 		return fmt.Errorf("provenance evidence requires a safe URI and SHA-256 digest")
 	}
 	return nil
@@ -285,12 +577,241 @@ func sortResources(resources []Resource) {
 	})
 }
 
-func decodeCanonicalBase64(value string, expectedLength int, name string) ([]byte, error) {
+func decodeCanonicalBase64Range(value string, minimumLength, maximumLength int, name string) ([]byte, error) {
 	decoded, err := base64.StdEncoding.DecodeString(value)
-	if err != nil || len(decoded) != expectedLength || base64.StdEncoding.EncodeToString(decoded) != value {
-		return nil, fmt.Errorf("%s must be canonical base64 encoding of exactly %d bytes", name, expectedLength)
+	if err != nil || len(decoded) < minimumLength || len(decoded) > maximumLength || base64.StdEncoding.EncodeToString(decoded) != value {
+		return nil, fmt.Errorf("%s must be canonical base64 encoding of %d to %d bytes", name, minimumLength, maximumLength)
 	}
 	return decoded, nil
+}
+
+func parseP256PublicKey(publicPEM []byte, authority string) ([]byte, *ecdsa.PublicKey, error) {
+	if len(publicPEM) == 0 || len(publicPEM) > 16*1024 {
+		return nil, nil, fmt.Errorf("%s public key has an invalid length", authority)
+	}
+	block, trailing := pem.Decode(publicPEM)
+	if block == nil || block.Type != "PUBLIC KEY" || len(block.Headers) != 0 || strings.TrimSpace(string(trailing)) != "" {
+		return nil, nil, fmt.Errorf("%s public key must contain exactly one PKIX PUBLIC KEY PEM block", authority)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse %s public key: %w", authority, err)
+	}
+	publicKey, ok := parsed.(*ecdsa.PublicKey)
+	if !ok || publicKey.Curve != elliptic.P256() {
+		return nil, nil, fmt.Errorf("%s public key must be ECDSA P-256", authority)
+	}
+	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil || subtle.ConstantTimeCompare(canonicalDER, block.Bytes) != 1 {
+		return nil, nil, fmt.Errorf("%s public key must use canonical PKIX SubjectPublicKeyInfo DER", authority)
+	}
+	return canonicalDER, publicKey, nil
+}
+
+func exactResourcesValue(data []byte) ([]byte, error) {
+	var outputs map[string]json.RawMessage
+	if err := json.Unmarshal(data, &outputs); err != nil || outputs == nil {
+		return nil, fmt.Errorf("parse full tofu output: expected one JSON object")
+	}
+	rawEnvelope, ok := outputs["resources"]
+	if !ok {
+		return nil, fmt.Errorf("full tofu output omits the resources envelope")
+	}
+	var envelope tofuOutputEnvelope
+	if err := decodeExactOutput(rawEnvelope, &envelope); err != nil {
+		return nil, fmt.Errorf("parse resources envelope: %w", err)
+	}
+	if envelope.Sensitive == nil || *envelope.Sensitive {
+		return nil, fmt.Errorf("resources output must be explicitly non-sensitive")
+	}
+	outputType := bytes.TrimSpace(envelope.Type)
+	value := bytes.TrimSpace(envelope.Value)
+	if len(outputType) < 2 || outputType[0] != '[' || bytes.Equal(outputType, []byte("null")) {
+		return nil, fmt.Errorf("resources output must have an explicit object type")
+	}
+	if len(value) < 2 || value[0] != '{' || bytes.Equal(value, []byte("null")) {
+		return nil, fmt.Errorf("resources output value must be a non-null object")
+	}
+	return value, nil
+}
+
+func decodeExactOutput(data []byte, output any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(output); err != nil {
+		return fmt.Errorf("parse actual resources output: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("actual resources output contains multiple JSON values")
+		}
+		return fmt.Errorf("parse trailing actual resources output: %w", err)
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, isDelimiter := token.(json.Delim)
+		if !isDelimiter {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok || seen[key] {
+					return fmt.Errorf("actual resources output contains a duplicate or invalid object key")
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("actual resources output has invalid JSON structure")
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	if err := walk(); err != nil {
+		return fmt.Errorf("parse actual resources output: %w", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("actual resources output contains multiple JSON values")
+		}
+		return fmt.Errorf("parse trailing actual resources output: %w", err)
+	}
+	return nil
+}
+
+func requiredString(value *string, field string) (string, error) {
+	if value == nil || *value == "" || strings.TrimSpace(*value) != *value {
+		return "", fmt.Errorf("actual resources output %s must be a nonempty, non-sensitive string", field)
+	}
+	return *value, nil
+}
+
+func appendSingleton(resources []Resource, kind, host string, value *string) ([]Resource, error) {
+	raw, err := requiredString(value, kind)
+	if err != nil {
+		return nil, err
+	}
+	uri, name, err := canonicalProviderResource(kind, host, raw)
+	if err != nil {
+		return nil, err
+	}
+	return append(resources, Resource{Kind: kind, Name: name, URI: uri}), nil
+}
+
+func appendResourceMap(resources []Resource, kind, host string, values map[string]string) ([]Resource, error) {
+	if values == nil {
+		return nil, fmt.Errorf("actual resources output %s map must not be null or omitted", kind)
+	}
+	if len(values) == 0 {
+		return resources, nil
+	}
+	for name, raw := range values {
+		if !namePattern.MatchString(name) || raw == "" || strings.TrimSpace(raw) != raw {
+			return nil, fmt.Errorf("actual resources output %s contains an empty or unsafe entry", kind)
+		}
+		uri, _, err := canonicalProviderResource(kind, host, raw)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, Resource{Kind: kind, Name: name, URI: uri})
+	}
+	return resources, nil
+}
+
+func appendBucketMap(resources []Resource, values map[string]string) ([]Resource, error) {
+	if values == nil {
+		return nil, fmt.Errorf("actual resources output artifact-bucket map must not be null or omitted")
+	}
+	if len(values) == 0 {
+		return resources, nil
+	}
+	for name, bucket := range values {
+		if !namePattern.MatchString(name) || !bucketPattern.MatchString(bucket) {
+			return nil, fmt.Errorf("actual resources output artifact-bucket contains an empty or unsafe entry")
+		}
+		resources = append(resources, Resource{Kind: "artifact-bucket", Name: name, URI: "//storage.googleapis.com/" + bucket})
+	}
+	return resources, nil
+}
+
+func appendDatabaseInstance(resources []Resource, instanceID, connectionName *string) ([]Resource, error) {
+	if instanceID == nil && connectionName == nil {
+		return resources, nil
+	}
+	instance, err := requiredString(instanceID, "database_instance_id")
+	if err != nil {
+		return nil, err
+	}
+	connection, err := requiredString(connectionName, "database_connection_name")
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(connection, ":")
+	if len(parts) != 3 || !projectIDPattern.MatchString(parts[0]) ||
+		!locationPattern.MatchString(parts[1]) || !namePattern.MatchString(parts[2]) {
+		return nil, fmt.Errorf("database_connection_name is not a canonical Cloud SQL connection name")
+	}
+	canonicalPath := "projects/" + parts[0] + "/instances/" + parts[2]
+	if instance != canonicalPath && instance != parts[0]+"/"+parts[2] && instance != parts[2] {
+		return nil, fmt.Errorf("database_instance_id does not identify the actual Cloud SQL connection name")
+	}
+	uri, name, err := canonicalProviderResource("database-instance", "sqladmin.googleapis.com", canonicalPath)
+	if err != nil {
+		return nil, err
+	}
+	return append(resources, Resource{Kind: "database-instance", Name: name, URI: uri}), nil
+}
+
+func canonicalProviderResource(kind, host, raw string) (string, string, error) {
+	if len(raw) > 2048 || !providerIDPattern.MatchString(raw) || strings.Contains(raw, "//") || strings.HasPrefix(raw, "/") {
+		return "", "", fmt.Errorf("actual resources output %s contains an unsafe provider ID", kind)
+	}
+	path := raw
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", "", fmt.Errorf("actual resources output %s contains an unsafe provider path", kind)
+		}
+	}
+	pattern := providerPathPatterns[kind]
+	if pattern == nil || !pattern.MatchString(path) {
+		return "", "", fmt.Errorf("actual resources output %s does not match its canonical provider resource shape", kind)
+	}
+	parts := strings.Split(path, "/")
+	name := parts[len(parts)-1]
+	if !namePattern.MatchString(name) {
+		return "", "", fmt.Errorf("actual resources output %s has an unsafe resource name", kind)
+	}
+	uri := "//" + host + "/" + path
+	if !safeResourceURI(uri) {
+		return "", "", fmt.Errorf("actual resources output %s produced an unsafe URI", kind)
+	}
+	return uri, name, nil
 }
 
 func atomicWrite(output string, data []byte) error {
@@ -321,6 +842,36 @@ func atomicWrite(output string, data []byte) error {
 
 func safeResourceURI(raw string) bool {
 	return safeURI(raw, true)
+}
+
+func validCapabilityResourceURI(kind, raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || !strings.HasPrefix(raw, "//") {
+		return false
+	}
+	path := strings.TrimPrefix(parsed.EscapedPath(), "/")
+	if pattern := providerPathPatterns[kind]; pattern != nil {
+		return parsed.Hostname() == providerHosts[kind] && pattern.MatchString(path)
+	}
+	switch kind {
+	case "project":
+		return parsed.Hostname() == "cloudresourcemanager.googleapis.com" &&
+			strings.HasPrefix(path, "projects/") && projectIDPattern.MatchString(strings.TrimPrefix(path, "projects/"))
+	case "artifact-bucket":
+		return parsed.Hostname() == "storage.googleapis.com" && bucketPattern.MatchString(path)
+	case "workload-identity-pool":
+		value := strings.TrimPrefix(path, "workloadIdentityPools/")
+		project := strings.TrimSuffix(value, ".svc.id.goog")
+		return parsed.Hostname() == "container.googleapis.com" && value != path && project != value && projectIDPattern.MatchString(project)
+	case "argocd-prerequisite":
+		identity := strings.TrimPrefix(path, "projects/-/serviceAccounts/")
+		return parsed.Hostname() == "iam.googleapis.com" && identity != path && serviceAccountPattern.MatchString(identity)
+	case "metrics-scope":
+		project := strings.TrimPrefix(path, "locations/global/metricsScopes/")
+		return parsed.Hostname() == "monitoring.googleapis.com" && project != path && projectIDPattern.MatchString(project)
+	default:
+		return false
+	}
 }
 
 func safeEvidenceURI(raw string) bool {
