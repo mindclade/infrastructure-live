@@ -506,8 +506,8 @@ encoded_script_assignment(script, name) := encoded if {
 	encoded := parts[1]
 }
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 root_primary_location := object.get(object.get(object.get(object.get(object.get(input, "planned_values", {}), "outputs", {}), "region_authority", {}), "value", {}), "primary_location", null)
 

@@ -1,7 +1,7 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,7 +24,9 @@ class ArtifactRestoreContractTest(unittest.TestCase):
             self.assertIn(control, source)
 
     def test_runbook_requires_checksum_and_non_destructive_restore(self):
-        runbook = (ROOT / "runbooks/artifact-storage-recovery.md").read_text(encoding="utf-8").lower()
+        runbook = (
+            (ROOT / "runbooks/artifact-storage-recovery.md").read_text(encoding="utf-8").lower()
+        )
         for concept in (
             "checksum",
             "generation",
@@ -40,9 +42,13 @@ class ArtifactRestoreContractTest(unittest.TestCase):
             self.assertIn(concept, runbook)
 
     def test_bucket_retention_inputs_are_provider_bounded(self):
-        source = (ROOT / "opentofu/modules/gcp/artifact-bucket/variables.tf").read_text(encoding="utf-8")
+        source = (ROOT / "opentofu/modules/gcp/artifact-bucket/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("bucket.soft_delete_days >= 7 && bucket.soft_delete_days <= 90", source)
-        self.assertIn("bucket.noncurrent_version_days >= 1 && bucket.noncurrent_version_days <= 3650", source)
+        self.assertIn(
+            "bucket.noncurrent_version_days >= 1 && bucket.noncurrent_version_days <= 3650", source
+        )
         self.assertIn("bucket.retention_days <= 3650", source)
         self.assertIn("bucket.delete_after_days >= bucket.retention_days", source)
 
@@ -68,7 +74,9 @@ class ArtifactRestoreContractTest(unittest.TestCase):
             self.assertIn(binding, profile)
 
         contract = json.loads(
-            (ROOT / "opentofu/live/production/artifacts/environment.auto.tfvars.json").read_text(encoding="utf-8")
+            (ROOT / "opentofu/live/production/artifacts/environment.auto.tfvars.json").read_text(
+                encoding="utf-8"
+            )
         )
         self.assertIs(contract["enabled"], False)
         self.assertIsNone(contract["config"]["project_id"])
@@ -87,9 +95,13 @@ class ArtifactRestoreContractTest(unittest.TestCase):
         stack = (ROOT / "opentofu/stacks/artifacts/main.tf").read_text(encoding="utf-8")
         bucket = (ROOT / "opentofu/modules/gcp/artifact-bucket/main.tf").read_text(encoding="utf-8")
         kms = (ROOT / "opentofu/modules/gcp/delegated-kms/main.tf").read_text(encoding="utf-8")
-        self.assertIn('\"${var.config.project_id}-production-ci-evidence\"', stack)
-        self.assertIn('key_ring_name = local.ci_evidence_archive_connected ? "ci-evidence" : null', stack)
-        self.assertIn("protection_level = var.ci_evidence_archive_profile.kmsProtectionLevel", stack)
+        self.assertIn('"${var.config.project_id}-production-ci-evidence"', stack)
+        self.assertIn(
+            'key_ring_name = local.ci_evidence_archive_connected ? "ci-evidence" : null', stack
+        )
+        self.assertIn(
+            "protection_level = var.ci_evidence_archive_profile.kmsProtectionLevel", stack
+        )
         self.assertIn('role = "roles/storage.objectViewer"', bucket)
         self.assertIn('role = "roles/storage.objectCreator"', bucket)
         self.assertIn("version_template {", kms)
@@ -116,7 +128,9 @@ class ArtifactRestoreContractTest(unittest.TestCase):
 
     def test_retention_lock_is_explicitly_unreachable_and_receipts_cannot_authorize_it(self):
         module = (ROOT / "opentofu/modules/gcp/artifact-bucket/main.tf").read_text(encoding="utf-8")
-        variables = (ROOT / "opentofu/modules/gcp/artifact-bucket/variables.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/artifact-bucket/variables.tf").read_text(
+            encoding="utf-8"
+        )
         stack = (ROOT / "opentofu/stacks/artifacts/outputs.tf").read_text(encoding="utf-8")
         for control in (
             "condition     = !each.value.lock_retention",
@@ -154,7 +168,9 @@ class ArtifactRestoreContractTest(unittest.TestCase):
         ):
             self.assertIn(control, stack)
 
-    def test_disaster_recovery_source_path_is_cloud_independent_and_connected_path_is_fail_closed(self):
+    def test_disaster_recovery_source_path_is_cloud_independent_and_connected_path_is_fail_closed(
+        self,
+    ):
         workflow = (ROOT / ".github/workflows/disaster-recovery.yml").read_text(encoding="utf-8")
         connected_marker = "  verify-ci-evidence-connected:\n"
         source_only, connected = workflow.split(connected_marker, 1)

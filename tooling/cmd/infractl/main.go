@@ -38,7 +38,7 @@ func (e outcomeError) ExitCode() int { return e.code }
 
 func run(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: infractl domain operation")
+		return errors.New("usage: infractl domain operation")
 	}
 	switch args[0] + " " + args[1] {
 	case "catalog validate":
@@ -57,7 +57,7 @@ func run(args []string) error {
 			return err
 		}
 		if *input == "" {
-			return fmt.Errorf("--input is required")
+			return errors.New("--input is required")
 		}
 		report, err := plan.ClassifyFile(*input)
 		if err != nil {
@@ -87,7 +87,7 @@ func run(args []string) error {
 			return err
 		}
 		if *desired == "" || *observed == "" {
-			return fmt.Errorf("--desired and --observed are required")
+			return errors.New("--desired and --observed are required")
 		}
 		report, err := drift.ClassifyFiles(*desired, *observed)
 		if err != nil {
@@ -108,7 +108,7 @@ func run(args []string) error {
 			return err
 		}
 		if *desired == "" || *observed == "" {
-			return fmt.Errorf("--desired and --observed are required")
+			return errors.New("--desired and --observed are required")
 		}
 		report, err := drift.ReconcileFiles(*desired, *observed)
 		if err != nil {
@@ -161,15 +161,15 @@ func writeExport(args []string, signed bool) error {
 		return err
 	}
 	if *resourcesPath == "" || *output == "" {
-		return fmt.Errorf("--resources and --output are required")
+		return errors.New("--resources and --output are required")
 	}
 	data, err := readBoundedInput(*resourcesPath, 8*1024*1024)
 	if err != nil {
 		return err
 	}
 	var resources []exports.Resource
-	if err := json.Unmarshal(data, &resources); err != nil {
-		return fmt.Errorf("parse resources: %w", err)
+	if decodeErr := json.Unmarshal(data, &resources); decodeErr != nil {
+		return fmt.Errorf("parse resources: %w", decodeErr)
 	}
 	root := "opentofu/live/" + *environment + "/" + *stack
 	input := exports.Input{
@@ -184,22 +184,22 @@ func writeExport(args []string, signed bool) error {
 		Provenance: exports.Reference{URI: *provenanceURI, Digest: *provenanceDigest},
 	}
 	if !signed {
-		document, err := exports.WritePayload(input, *output)
-		if err != nil {
-			return err
+		document, writeErr := exports.WritePayload(input, *output)
+		if writeErr != nil {
+			return writeErr
 		}
 		return emit(os.Stdout, map[string]any{"ok": true, "output": *output, "environment": document.Metadata.Environment, "stack": document.Metadata.Stack})
 	}
 	if *signaturePath == "" || *trustedKeyVersion == "" || *trustedPublicKeyDigest == "" {
-		return fmt.Errorf("--signature, --trusted-key-version, and --trusted-public-key-digest are required for exports emit")
+		return errors.New("--signature, --trusted-key-version, and --trusted-public-key-digest are required for exports emit")
 	}
 	signatureData, err := readBoundedInput(*signaturePath, 16*1024)
 	if err != nil {
 		return err
 	}
 	var signature exports.Signature
-	if err := json.Unmarshal(signatureData, &signature); err != nil {
-		return fmt.Errorf("parse detached signature: %w", err)
+	if decodeErr := json.Unmarshal(signatureData, &signature); decodeErr != nil {
+		return fmt.Errorf("parse detached signature: %w", decodeErr)
 	}
 	document, err := exports.Emit(input, signature, *trustedKeyVersion, *trustedPublicKeyDigest, *output)
 	if err != nil {
@@ -217,7 +217,7 @@ func writeExportResources(args []string) error {
 		return err
 	}
 	if *stack == "" || *input == "" || *output == "" {
-		return fmt.Errorf("--stack, --input, and --output are required")
+		return errors.New("--stack, --input, and --output are required")
 	}
 	data, err := readBoundedInput(*input, 8*1024*1024)
 	if err != nil {
@@ -243,7 +243,7 @@ func verifyKMSReadiness(args []string) error {
 	}
 	if *trustedPublicKey == "" || *observedPublicKey == "" || *trustedPublicKeyDigest == "" ||
 		*message == "" || *signature == "" || *outputDER == "" {
-		return fmt.Errorf("exports kms-readiness requires the complete trusted key, observed key, digest, challenge, signature, and DER output set")
+		return errors.New("exports kms-readiness requires the complete trusted key, observed key, digest, challenge, signature, and DER output set")
 	}
 	observed, err := readBoundedInput(*observedPublicKey, 16*1024)
 	if err != nil {
@@ -279,7 +279,9 @@ func readBoundedInput(path string, maximum int64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer file.Close()
+		defer func() {
+			_ = file.Close() // A read-only descriptor has no buffered state to preserve.
+		}()
 		openedInfo, err := file.Stat()
 		if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) || openedInfo.Size() > maximum {
 			return nil, fmt.Errorf("input %s changed identity or exceeded its bound while opening", path)

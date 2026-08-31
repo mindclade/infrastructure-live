@@ -1,6 +1,10 @@
 module(
     name = "mindclade_infrastructure_live",
     version = "0.0.0",
+    bazel_compatibility = [
+        ">=9.1.1",
+        "<=9.1.1",
+    ],
 )
 
 bazel_dep(name = "gazelle", version = "0.51.3")

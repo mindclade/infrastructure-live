@@ -185,6 +185,11 @@ nix flake check --no-update-lock-file
 nix develop --no-update-lock-file .#ci --command just ci
 ```
 
+The root developer-quality interface is `just format`, `just format-check`,
+`just lint`, and `just check`. Formatting is limited to handwritten source and
+configuration, including committed environment variable JSON; generated plans,
+state, exports, and evidence remain under their owning commands.
+
 The canonical supported entrypoints execute inside `devShells.ci`. Focused
 native commands remain available there for diagnosis:
 

@@ -1,10 +1,10 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,16 +18,40 @@ def classify(desired, observed, *, raw=False):
     desired_path.write_text(desired_data, encoding="utf-8")
     observed_path.write_text(observed_data, encoding="utf-8")
     runfiles = Path(os.environ.get("TEST_SRCDIR", "/nonexistent"))
-    binaries = sorted(path for path in runfiles.rglob("infractl") if path.is_file() and os.access(path, os.X_OK))
+    binaries = sorted(
+        path for path in runfiles.rglob("infractl") if path.is_file() and os.access(path, os.X_OK)
+    )
     if binaries:
-        command = [str(binaries[0]), "drift", "classify", "--desired", str(desired_path), "--observed", str(observed_path)]
+        command = [
+            str(binaries[0]),
+            "drift",
+            "classify",
+            "--desired",
+            str(desired_path),
+            "--observed",
+            str(observed_path),
+        ]
     else:
         binary = Path(directory.name) / "infractl"
-        build = subprocess.run(["go", "build", "-o", str(binary), "./cmd/infractl"], cwd=ROOT / "tooling", text=True, capture_output=True, check=False)
+        build = subprocess.run(
+            ["go", "build", "-o", str(binary), "./cmd/infractl"],
+            cwd=ROOT / "tooling",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if build.returncode != 0:
             directory.cleanup()
             return build
-        command = [str(binary), "drift", "classify", "--desired", str(desired_path), "--observed", str(observed_path)]
+        command = [
+            str(binary),
+            "drift",
+            "classify",
+            "--desired",
+            str(desired_path),
+            "--observed",
+            str(observed_path),
+        ]
     result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
     directory.cleanup()
     return result

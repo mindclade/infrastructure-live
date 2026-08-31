@@ -56,8 +56,8 @@ has_accelerator_taint(taints) if {
 	object.get(taint, "effect", "") == "NO_SCHEDULE"
 }
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 mutates(actions) if {
 	some action in actions

@@ -86,8 +86,8 @@ deny contains message if {
 
 root_environment := object.get(object.get(object.get(input, "variables", {}), "environment", {}), "value", "")
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 network_policy_enforced(after) if {
 	object.get(after, "datapath_provider", "") == "ADVANCED_DATAPATH"

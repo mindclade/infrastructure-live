@@ -6,21 +6,27 @@
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "dataClasses"],
   "properties": {
-    "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
-    "kind": {"const": "DataClassCatalog"},
+    "apiVersion": { "const": "infrastructure.mindclade.dev/v1" },
+    "kind": { "const": "DataClassCatalog" },
     "dataClasses": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "publicAccessPermitted", "customerManagedEncryptionRequired", "auditDataAccessRequired", "minimumRetentionDays"],
+        "required": [
+          "name",
+          "publicAccessPermitted",
+          "customerManagedEncryptionRequired",
+          "auditDataAccessRequired",
+          "minimumRetentionDays"
+        ],
         "properties": {
-          "name": {"enum": ["public", "internal", "confidential", "restricted"]},
-          "publicAccessPermitted": {"type": "boolean"},
-          "customerManagedEncryptionRequired": {"type": "boolean"},
-          "auditDataAccessRequired": {"type": "boolean"},
-          "minimumRetentionDays": {"type": "integer", "minimum": 0, "maximum": 3650}
+          "name": { "enum": ["public", "internal", "confidential", "restricted"] },
+          "publicAccessPermitted": { "type": "boolean" },
+          "customerManagedEncryptionRequired": { "type": "boolean" },
+          "auditDataAccessRequired": { "type": "boolean" },
+          "minimumRetentionDays": { "type": "integer", "minimum": 0, "maximum": 3650 }
         }
       }
     }

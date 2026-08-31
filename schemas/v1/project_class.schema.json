@@ -6,22 +6,34 @@
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "projectClasses"],
   "properties": {
-    "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
-    "kind": {"const": "ProjectClassCatalog"},
+    "apiVersion": { "const": "infrastructure.mindclade.dev/v1" },
+    "kind": { "const": "ProjectClassCatalog" },
     "projectClasses": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "folderBindingRequired", "billingBindingRequired", "deletionProtection", "sharedVpcServiceProject", "allowedEnvironmentTiers"],
+        "required": [
+          "name",
+          "folderBindingRequired",
+          "billingBindingRequired",
+          "deletionProtection",
+          "sharedVpcServiceProject",
+          "allowedEnvironmentTiers"
+        ],
         "properties": {
-          "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
-          "folderBindingRequired": {"const": true},
-          "billingBindingRequired": {"const": true},
-          "deletionProtection": {"const": true},
-          "sharedVpcServiceProject": {"const": true},
-          "allowedEnvironmentTiers": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["development", "staging", "production", "restricted"]}}
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" },
+          "folderBindingRequired": { "const": true },
+          "billingBindingRequired": { "const": true },
+          "deletionProtection": { "const": true },
+          "sharedVpcServiceProject": { "const": true },
+          "allowedEnvironmentTiers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["development", "staging", "production", "restricted"] }
+          }
         }
       }
     }

@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -72,8 +73,10 @@ var (
 	rootPattern = regexp.MustCompile(`^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$`)
 )
 
-var validEnvironments = map[string]bool{"development": true, "staging": true, "production": true, "restricted": true}
-var validStacks = map[string]bool{"foundation": true, "network": true, "artifacts": true, "data-services": true, "clusters": true, "ci-execution": true, "observability": true}
+var (
+	validEnvironments = map[string]bool{"development": true, "staging": true, "production": true, "restricted": true}
+	validStacks       = map[string]bool{"foundation": true, "network": true, "artifacts": true, "data-services": true, "clusters": true, "ci-execution": true, "observability": true}
+)
 
 type Metadata struct {
 	Environment        string `json:"environment"`
@@ -215,7 +218,7 @@ type tofuOutputEnvelope struct {
 // for a safe value. Ignored provider values are never copied.
 func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 	if !validStacks[stack] {
-		return nil, fmt.Errorf("invalid stack for resource derivation")
+		return nil, errors.New("invalid stack for resource derivation")
 	}
 	if err := rejectDuplicateJSONKeys(data); err != nil {
 		return nil, err
@@ -232,7 +235,7 @@ func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 			var projectID string
 			projectID, err = requiredString(output.ProjectID, "project_id")
 			if err == nil && !projectIDPattern.MatchString(projectID) {
-				err = fmt.Errorf("project_id is not a canonical GCP project ID")
+				err = errors.New("project_id is not a canonical GCP project ID")
 			}
 			if err == nil {
 				resources = append(resources, Resource{Kind: "project", Name: projectID, URI: "//cloudresourcemanager.googleapis.com/projects/" + projectID})
@@ -284,7 +287,7 @@ func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 			workloadPool, err = requiredString(output.WorkloadIdentityPool, "workload_identity_pool")
 			parts := strings.Split(workloadPool, ".svc.id.goog")
 			if err == nil && (len(parts) != 2 || parts[1] != "" || !projectIDPattern.MatchString(parts[0])) {
-				err = fmt.Errorf("workload_identity_pool is not a canonical GKE workload pool")
+				err = errors.New("workload_identity_pool is not a canonical GKE workload pool")
 			}
 			if err == nil {
 				resources = append(resources, Resource{Kind: "workload-identity-pool", Name: "gke-workload-identity", URI: "//container.googleapis.com/workloadIdentityPools/" + workloadPool})
@@ -294,7 +297,7 @@ func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 			var identity string
 			identity, err = requiredString(output.ArgoCDPrerequisiteIdentity, "argocd_prerequisite_identity")
 			if err == nil && !serviceAccountPattern.MatchString(identity) {
-				err = fmt.Errorf("argocd_prerequisite_identity is not a canonical service-account email")
+				err = errors.New("argocd_prerequisite_identity is not a canonical service-account email")
 			}
 			if err == nil {
 				resources = append(resources, Resource{Kind: "argocd-prerequisite", Name: "argocd-controller", URI: "//iam.googleapis.com/projects/-/serviceAccounts/" + identity})
@@ -314,7 +317,7 @@ func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 			var projectID string
 			projectID, err = requiredString(output.MetricsScope, "metrics_scope")
 			if err == nil && !projectIDPattern.MatchString(projectID) {
-				err = fmt.Errorf("metrics_scope is not a canonical GCP project ID")
+				err = errors.New("metrics_scope is not a canonical GCP project ID")
 			}
 			if err == nil {
 				resources = append(resources, Resource{Kind: "metrics-scope", Name: "metrics-scope", URI: "//monitoring.googleapis.com/locations/global/metricsScopes/" + projectID})
@@ -325,7 +328,7 @@ func ResourcesFromOutput(stack string, data []byte) ([]Resource, error) {
 		return nil, err
 	}
 	if len(resources) == 0 {
-		return nil, fmt.Errorf("actual resources output contains no exportable capability resources")
+		return nil, errors.New("actual resources output contains no exportable capability resources")
 	}
 	sortResources(resources)
 	return resources, nil
@@ -353,7 +356,7 @@ func WriteResourcesFromOutput(stack string, data []byte, output string) ([]Resou
 func VerifyKMSReadiness(trustedPEMBase64 string, observedPEM []byte, trustedDigest string, message, signature []byte, outputDER string) error {
 	trustedPEM, err := base64.StdEncoding.Strict().DecodeString(trustedPEMBase64)
 	if err != nil || base64.StdEncoding.EncodeToString(trustedPEM) != trustedPEMBase64 {
-		return fmt.Errorf("bootstrap-qualified public key must be canonical base64")
+		return errors.New("bootstrap-qualified public key must be canonical base64")
 	}
 	trustedDER, trustedKey, err := parseP256PublicKey(trustedPEM, "bootstrap-qualified")
 	if err != nil {
@@ -363,21 +366,20 @@ func VerifyKMSReadiness(trustedPEMBase64 string, observedPEM []byte, trustedDige
 	if err != nil {
 		return err
 	}
-	if subtle.ConstantTimeCompare(trustedDER, observedDER) != 1 ||
-		trustedKey.X.Cmp(observedKey.X) != 0 || trustedKey.Y.Cmp(observedKey.Y) != 0 {
-		return fmt.Errorf("KMS-observed public key does not match the bootstrap-qualified key")
+	if subtle.ConstantTimeCompare(trustedDER, observedDER) != 1 || !trustedKey.Equal(observedKey) {
+		return errors.New("KMS-observed public key does not match the bootstrap-qualified key")
 	}
 	digest := sha256.Sum256(trustedDER)
 	actualDigest := "sha256:" + hex.EncodeToString(digest[:])
 	if !digestPattern.MatchString(trustedDigest) || subtle.ConstantTimeCompare([]byte(trustedDigest), []byte(actualDigest)) != 1 {
-		return fmt.Errorf("canonical SPKI public-key digest does not match bootstrap qualification")
+		return errors.New("canonical SPKI public-key digest does not match bootstrap qualification")
 	}
 	if len(message) == 0 || len(message) > 4096 || len(signature) < 8 || len(signature) > 256 {
-		return fmt.Errorf("readiness challenge or signature has an invalid length")
+		return errors.New("readiness challenge or signature has an invalid length")
 	}
 	messageDigest := sha256.Sum256(message)
 	if !ecdsa.VerifyASN1(observedKey, messageDigest[:], signature) {
-		return fmt.Errorf("KMS readiness challenge signature verification failed")
+		return errors.New("KMS readiness challenge signature verification failed")
 	}
 	return atomicWrite(outputDER, trustedDER)
 }
@@ -428,14 +430,14 @@ func Emit(input Input, signature Signature, trustedKeyVersion, trustedPublicKeyD
 	document.Spec.Evidence.Signature = signature
 	if !keyVersionPattern.MatchString(trustedKeyVersion) ||
 		subtle.ConstantTimeCompare([]byte(signature.KeyVersion), []byte(trustedKeyVersion)) != 1 {
-		return Document{}, fmt.Errorf("signature keyVersion does not match the independently supplied trusted KMS key version")
+		return Document{}, errors.New("signature keyVersion does not match the independently supplied trusted KMS key version")
 	}
 	if !digestPattern.MatchString(trustedPublicKeyDigest) ||
 		subtle.ConstantTimeCompare([]byte(signature.PublicKeyDigest), []byte(trustedPublicKeyDigest)) != 1 {
-		return Document{}, fmt.Errorf("signature publicKeyDigest does not match the independently supplied trusted public-key digest")
+		return Document{}, errors.New("signature publicKeyDigest does not match the independently supplied trusted public-key digest")
 	}
-	if err := Validate(document); err != nil {
-		return Document{}, err
+	if validationErr := Validate(document); validationErr != nil {
+		return Document{}, validationErr
 	}
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -459,10 +461,10 @@ func Validate(document Document) error {
 	}
 	signature := document.Spec.Evidence.Signature
 	if signature.Algorithm != "EC_SIGN_P256_SHA256" {
-		return fmt.Errorf("signature algorithm must be EC_SIGN_P256_SHA256")
+		return errors.New("signature algorithm must be EC_SIGN_P256_SHA256")
 	}
 	if !keyVersionPattern.MatchString(signature.KeyVersion) {
-		return fmt.Errorf("signature keyVersion must be the exact bootstrap infrastructure-export key version")
+		return errors.New("signature keyVersion must be the exact bootstrap infrastructure-export key version")
 	}
 	publicKeyDER, err := decodeCanonicalBase64Range(signature.PublicKey, 64, 512, "signature public key")
 	if err != nil {
@@ -474,11 +476,11 @@ func Validate(document Document) error {
 	}
 	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() {
-		return fmt.Errorf("signature public key must be ECDSA P-256")
+		return errors.New("signature public key must be ECDSA P-256")
 	}
 	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil || subtle.ConstantTimeCompare(canonicalDER, publicKeyDER) != 1 {
-		return fmt.Errorf("signature public key must use canonical PKIX SubjectPublicKeyInfo DER")
+		return errors.New("signature public key must use canonical PKIX SubjectPublicKeyInfo DER")
 	}
 	signatureValue, err := decodeCanonicalBase64Range(signature.Value, 8, 256, "signature value")
 	if err != nil {
@@ -487,15 +489,15 @@ func Validate(document Document) error {
 	keyDigest := sha256.Sum256(publicKeyDER)
 	expectedPublicKeyDigest := "sha256:" + hex.EncodeToString(keyDigest[:])
 	if subtle.ConstantTimeCompare([]byte(signature.PublicKeyDigest), []byte(expectedPublicKeyDigest)) != 1 {
-		return fmt.Errorf("signature publicKeyDigest does not match the embedded public key")
+		return errors.New("signature publicKeyDigest does not match the embedded public key")
 	}
 	payloadHash := sha256.Sum256(payload)
 	expectedPayloadDigest := "sha256:" + hex.EncodeToString(payloadHash[:])
 	if signature.PayloadDigest != expectedPayloadDigest {
-		return fmt.Errorf("signature payloadDigest does not match the canonical export payload")
+		return errors.New("signature payloadDigest does not match the canonical export payload")
 	}
 	if !ecdsa.VerifyASN1(publicKey, payloadHash[:], signatureValue) {
-		return fmt.Errorf("GCP KMS ECDSA P-256 signature verification failed")
+		return errors.New("GCP KMS ECDSA P-256 signature verification failed")
 	}
 	return nil
 }
@@ -503,32 +505,32 @@ func Validate(document Document) error {
 func validateUnsigned(document Document) error {
 	metadata := document.Metadata
 	if document.APIVersion != APIVersion || document.Kind != Kind {
-		return fmt.Errorf("invalid infrastructure export type metadata")
+		return errors.New("invalid infrastructure export type metadata")
 	}
 	if !validEnvironments[metadata.Environment] || !validStacks[metadata.Stack] {
-		return fmt.Errorf("invalid environment or stack")
+		return errors.New("invalid environment or stack")
 	}
 	if metadata.SourceRepository != "mindclade/infrastructure-live" || !commitPattern.MatchString(metadata.SourceCommit) {
-		return fmt.Errorf("source repository and full commit are required")
+		return errors.New("source repository and full commit are required")
 	}
 	if metadata.Root != "opentofu/live/"+metadata.Environment+"/"+metadata.Stack || !rootPattern.MatchString(metadata.Root) {
-		return fmt.Errorf("root does not match the environment and stack")
+		return errors.New("root does not match the environment and stack")
 	}
 	if !digestPattern.MatchString(metadata.PlanDigest) ||
 		!digestPattern.MatchString(metadata.ProviderLockDigest) ||
 		!digestPattern.MatchString(metadata.BackendStateDigest) ||
 		!digestPattern.MatchString(metadata.SchemaDigest) {
-		return fmt.Errorf("plan, provider-lock, backend-state, and schema SHA-256 digests are required")
+		return errors.New("plan, provider-lock, backend-state, and schema SHA-256 digests are required")
 	}
 	if !lineagePattern.MatchString(metadata.BackendLineage) {
-		return fmt.Errorf("a canonical backend lineage UUID is required")
+		return errors.New("a canonical backend lineage UUID is required")
 	}
 	parsedTime, err := time.Parse(time.RFC3339, metadata.GeneratedAt)
 	if err != nil || parsedTime.Format(time.RFC3339) != metadata.GeneratedAt || !strings.HasSuffix(metadata.GeneratedAt, "Z") {
-		return fmt.Errorf("generatedAt must be canonical RFC3339 UTC evidence time")
+		return errors.New("generatedAt must be canonical RFC3339 UTC evidence time")
 	}
 	if len(document.Spec.Resources) == 0 {
-		return fmt.Errorf("at least one non-sensitive resource reference is required")
+		return errors.New("at least one non-sensitive resource reference is required")
 	}
 	seen := map[string]bool{}
 	for _, resource := range document.Spec.Resources {
@@ -536,7 +538,7 @@ func validateUnsigned(document Document) error {
 			return fmt.Errorf("resource kind %q is not allowed for stack %q", resource.Kind, metadata.Stack)
 		}
 		if !namePattern.MatchString(resource.Name) || !safeResourceURI(resource.URI) || !validCapabilityResourceURI(resource.Kind, resource.URI) {
-			return fmt.Errorf("every resource requires kind, name, and a safe URI")
+			return errors.New("every resource requires kind, name, and a safe URI")
 		}
 		identity := resource.Kind + "\x00" + resource.Name
 		if seen[identity] {
@@ -546,7 +548,7 @@ func validateUnsigned(document Document) error {
 	}
 	provenance := document.Spec.Evidence.Provenance
 	if !safeEvidenceURI(provenance.URI) || !provenancePattern.MatchString(provenance.URI) || !digestPattern.MatchString(provenance.Digest) {
-		return fmt.Errorf("provenance evidence requires a safe URI and SHA-256 digest")
+		return errors.New("provenance evidence requires a safe URI and SHA-256 digest")
 	}
 	return nil
 }
@@ -611,26 +613,26 @@ func parseP256PublicKey(publicPEM []byte, authority string) ([]byte, *ecdsa.Publ
 func exactResourcesValue(data []byte) ([]byte, error) {
 	var outputs map[string]json.RawMessage
 	if err := json.Unmarshal(data, &outputs); err != nil || outputs == nil {
-		return nil, fmt.Errorf("parse full tofu output: expected one JSON object")
+		return nil, errors.New("parse full tofu output: expected one JSON object")
 	}
 	rawEnvelope, ok := outputs["resources"]
 	if !ok {
-		return nil, fmt.Errorf("full tofu output omits the resources envelope")
+		return nil, errors.New("full tofu output omits the resources envelope")
 	}
 	var envelope tofuOutputEnvelope
 	if err := decodeExactOutput(rawEnvelope, &envelope); err != nil {
 		return nil, fmt.Errorf("parse resources envelope: %w", err)
 	}
 	if envelope.Sensitive == nil || *envelope.Sensitive {
-		return nil, fmt.Errorf("resources output must be explicitly non-sensitive")
+		return nil, errors.New("resources output must be explicitly non-sensitive")
 	}
 	outputType := bytes.TrimSpace(envelope.Type)
 	value := bytes.TrimSpace(envelope.Value)
 	if len(outputType) < 2 || outputType[0] != '[' || bytes.Equal(outputType, []byte("null")) {
-		return nil, fmt.Errorf("resources output must have an explicit object type")
+		return nil, errors.New("resources output must have an explicit object type")
 	}
 	if len(value) < 2 || value[0] != '{' || bytes.Equal(value, []byte("null")) {
-		return nil, fmt.Errorf("resources output value must be a non-null object")
+		return nil, errors.New("resources output value must be a non-null object")
 	}
 	return value, nil
 }
@@ -644,7 +646,7 @@ func decodeExactOutput(data []byte, output any) error {
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("actual resources output contains multiple JSON values")
+			return errors.New("actual resources output contains multiple JSON values")
 		}
 		return fmt.Errorf("parse trailing actual resources output: %w", err)
 	}
@@ -668,27 +670,27 @@ func rejectDuplicateJSONKeys(data []byte) error {
 		case '{':
 			seen := map[string]bool{}
 			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return err
+				keyToken, tokenErr := decoder.Token()
+				if tokenErr != nil {
+					return tokenErr
 				}
 				key, ok := keyToken.(string)
 				if !ok || seen[key] {
-					return fmt.Errorf("actual resources output contains a duplicate or invalid object key")
+					return errors.New("actual resources output contains a duplicate or invalid object key")
 				}
 				seen[key] = true
-				if err := walk(); err != nil {
-					return err
+				if walkErr := walk(); walkErr != nil {
+					return walkErr
 				}
 			}
 		case '[':
 			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
+				if walkErr := walk(); walkErr != nil {
+					return walkErr
 				}
 			}
 		default:
-			return fmt.Errorf("actual resources output has invalid JSON structure")
+			return errors.New("actual resources output has invalid JSON structure")
 		}
 		_, err = decoder.Token()
 		return err
@@ -698,7 +700,7 @@ func rejectDuplicateJSONKeys(data []byte) error {
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("actual resources output contains multiple JSON values")
+			return errors.New("actual resources output contains multiple JSON values")
 		}
 		return fmt.Errorf("parse trailing actual resources output: %w", err)
 	}
@@ -746,14 +748,14 @@ func appendResourceMap(resources []Resource, kind, host string, values map[strin
 
 func appendBucketMap(resources []Resource, values map[string]string) ([]Resource, error) {
 	if values == nil {
-		return nil, fmt.Errorf("actual resources output artifact-bucket map must not be null or omitted")
+		return nil, errors.New("actual resources output artifact-bucket map must not be null or omitted")
 	}
 	if len(values) == 0 {
 		return resources, nil
 	}
 	for name, bucket := range values {
 		if !namePattern.MatchString(name) || !bucketPattern.MatchString(bucket) {
-			return nil, fmt.Errorf("actual resources output artifact-bucket contains an empty or unsafe entry")
+			return nil, errors.New("actual resources output artifact-bucket contains an empty or unsafe entry")
 		}
 		resources = append(resources, Resource{Kind: "artifact-bucket", Name: name, URI: "//storage.googleapis.com/" + bucket})
 	}
@@ -775,11 +777,11 @@ func appendDatabaseInstance(resources []Resource, instanceID, connectionName *st
 	parts := strings.Split(connection, ":")
 	if len(parts) != 3 || !projectIDPattern.MatchString(parts[0]) ||
 		!locationPattern.MatchString(parts[1]) || !namePattern.MatchString(parts[2]) {
-		return nil, fmt.Errorf("database_connection_name is not a canonical Cloud SQL connection name")
+		return nil, errors.New("database_connection_name is not a canonical Cloud SQL connection name")
 	}
 	canonicalPath := "projects/" + parts[0] + "/instances/" + parts[2]
 	if instance != canonicalPath && instance != parts[0]+"/"+parts[2] && instance != parts[2] {
-		return nil, fmt.Errorf("database_instance_id does not identify the actual Cloud SQL connection name")
+		return nil, errors.New("database_instance_id does not identify the actual Cloud SQL connection name")
 	}
 	uri, name, err := canonicalProviderResource("database-instance", "sqladmin.googleapis.com", canonicalPath)
 	if err != nil {
@@ -821,18 +823,17 @@ func atomicWrite(output string, data []byte) error {
 		return err
 	}
 	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
+	defer func() {
+		_ = os.Remove(temporaryName) // Best-effort cleanup after rename or failure.
+	}()
 	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
+		return errors.Join(err, temporary.Close())
 	}
 	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
-		return err
+		return errors.Join(err, temporary.Close())
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
+		return errors.Join(err, temporary.Close())
 	}
 	if err := temporary.Close(); err != nil {
 		return err

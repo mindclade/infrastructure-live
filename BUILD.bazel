@@ -4,7 +4,27 @@ package(default_visibility = ["//visibility:private"])
 
 filegroup(
     name = "repository_source",
-    srcs = glob([
+    srcs = [
+        ".bazelignore",
+        ".bazelrc",
+        ".bazelversion",
+        ".editorconfig",
+        ".gitignore",
+        ".golangci.yml",
+        ".markdownlint-cli2.yaml",
+        ".pre-commit-config.yaml",
+        ".vscode/extensions.json",
+        ".vscode/settings.json",
+        ".yamllint.yaml",
+        "CONTRIBUTING.md",
+        "MODULE.bazel.lock",
+        "LICENSE",
+        "biome.json",
+        "flake.lock",
+        "flake.nix",
+        "justfile",
+        "pyproject.toml",
+    ] + glob([
         ".github/**",
         "catalog/**",
         "opentofu/**",
@@ -15,8 +35,6 @@ filegroup(
         "*.md",
         "*.yaml",
         "*.bazel",
-        "justfile",
-        "LICENSE",
     ]),
 )
 

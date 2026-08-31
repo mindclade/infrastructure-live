@@ -1,31 +1,51 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import base64
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ENVIRONMENTS = {"development", "staging", "production", "restricted"}
-STACKS = {"foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability"}
+STACKS = {
+    "foundation",
+    "network",
+    "artifacts",
+    "data-services",
+    "clusters",
+    "ci-execution",
+    "observability",
+}
 
 
 def run_infractl(*arguments):
     runfiles = Path(os.environ.get("TEST_SRCDIR", "/nonexistent"))
-    candidates = sorted(path for path in runfiles.rglob("infractl") if path.is_file() and os.access(path, os.X_OK))
+    candidates = sorted(
+        path for path in runfiles.rglob("infractl") if path.is_file() and os.access(path, os.X_OK)
+    )
     if candidates:
-        return subprocess.run([str(candidates[0]), *arguments], cwd=ROOT, text=True, capture_output=True, check=False)
+        return subprocess.run(
+            [str(candidates[0]), *arguments], cwd=ROOT, text=True, capture_output=True, check=False
+        )
     with tempfile.TemporaryDirectory() as directory:
         binary = Path(directory) / "infractl"
-        build = subprocess.run(["go", "build", "-o", str(binary), "./cmd/infractl"], cwd=ROOT / "tooling", text=True, capture_output=True, check=False)
+        build = subprocess.run(
+            ["go", "build", "-o", str(binary), "./cmd/infractl"],
+            cwd=ROOT / "tooling",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if build.returncode != 0:
             return build
-        return subprocess.run([str(binary), *arguments], cwd=ROOT, text=True, capture_output=True, check=False)
+        return subprocess.run(
+            [str(binary), *arguments], cwd=ROOT, text=True, capture_output=True, check=False
+        )
 
 
 def workflow_source(name):
@@ -83,12 +103,20 @@ def test_p256_sign(message):
             encoded = b"\x00" + encoded
         return b"\x02" + bytes([len(encoded)]) + encoded
 
-    scalar = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-key").digest(), "big") % (order - 1) + 1
+    scalar = (
+        int.from_bytes(hashlib.sha256(b"mindclade-test-p256-key").digest(), "big") % (order - 1) + 1
+    )
     public_x, public_y = multiply(base, scalar)
     uncompressed = b"\x04" + public_x.to_bytes(32, "big") + public_y.to_bytes(32, "big")
-    public_key = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    public_key = (
+        bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    )
     digest = hashlib.sha256(message).digest()
-    nonce = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-nonce" + digest).digest(), "big") % (order - 1) + 1
+    nonce = (
+        int.from_bytes(hashlib.sha256(b"mindclade-test-p256-nonce" + digest).digest(), "big")
+        % (order - 1)
+        + 1
+    )
     nonce_x, _ = multiply(base, nonce)
     r = nonce_x % order
     s = (pow(nonce, -1, order) * (int.from_bytes(digest, "big") + r * scalar)) % order
@@ -97,8 +125,13 @@ def test_p256_sign(message):
 
 
 def signed_export(
-    directory, resources, stack="foundation", provenance_uri=None,
-    tamper_payload=None, trusted_key_version=None, trusted_public_key_digest=None,
+    directory,
+    resources,
+    stack="foundation",
+    provenance_uri=None,
+    tamper_payload=None,
+    trusted_key_version=None,
+    trusted_public_key_digest=None,
 ):
     directory = Path(directory)
     resources_path = directory / "resources.json"
@@ -106,25 +139,39 @@ def signed_export(
     signature_path = directory / "export.signature.json"
     output_path = directory / "export.json"
     resources_path.write_text(json.dumps(resources), encoding="utf-8")
-    provenance_uri = provenance_uri or "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
-    arguments = [
-        "--environment", "development",
-        "--stack", stack,
-        "--source-commit", "a" * 40,
-        "--plan-digest", "sha256:" + "b" * 64,
-        "--provider-lock-digest", "sha256:" + "c" * 64,
-        "--backend-state-digest", "sha256:" + "d" * 64,
-        "--backend-lineage", "123e4567-e89b-42d3-a456-426614174000",
-        "--backend-serial", "17",
-        "--schema-digest", "sha256:" + "e" * 64,
-        "--generated-at", "2026-08-29T12:00:00Z",
-        "--resources", str(resources_path),
-        "--provenance-uri", provenance_uri,
-        "--provenance-digest", "sha256:" + "f" * 64,
-    ]
-    payload_result = run_infractl(
-        "exports", "payload", *arguments, "--output", str(payload_path)
+    provenance_uri = (
+        provenance_uri
+        or "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
     )
+    arguments = [
+        "--environment",
+        "development",
+        "--stack",
+        stack,
+        "--source-commit",
+        "a" * 40,
+        "--plan-digest",
+        "sha256:" + "b" * 64,
+        "--provider-lock-digest",
+        "sha256:" + "c" * 64,
+        "--backend-state-digest",
+        "sha256:" + "d" * 64,
+        "--backend-lineage",
+        "123e4567-e89b-42d3-a456-426614174000",
+        "--backend-serial",
+        "17",
+        "--schema-digest",
+        "sha256:" + "e" * 64,
+        "--generated-at",
+        "2026-08-29T12:00:00Z",
+        "--resources",
+        str(resources_path),
+        "--provenance-uri",
+        provenance_uri,
+        "--provenance-digest",
+        "sha256:" + "f" * 64,
+    ]
+    payload_result = run_infractl("exports", "payload", *arguments, "--output", str(payload_path))
     if payload_result.returncode != 0:
         return payload_result, output_path
 
@@ -143,11 +190,17 @@ def signed_export(
     if tamper_payload is not None:
         tamper_payload(resources_path, signature_path)
     result = run_infractl(
-        "exports", "emit", *arguments,
-        "--signature", str(signature_path),
-        "--trusted-key-version", trusted_key_version or envelope["keyVersion"],
-        "--trusted-public-key-digest", trusted_public_key_digest or envelope["publicKeyDigest"],
-        "--output", str(output_path),
+        "exports",
+        "emit",
+        *arguments,
+        "--signature",
+        str(signature_path),
+        "--trusted-key-version",
+        trusted_key_version or envelope["keyVersion"],
+        "--trusted-public-key-digest",
+        trusted_public_key_digest or envelope["publicKeyDigest"],
+        "--output",
+        str(output_path),
     )
     return result, output_path
 
@@ -157,58 +210,164 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         if not (ROOT / ".git").exists():
             self.skipTest("Bazel runfiles intentionally expose only declared test data")
         environments = ("development", "staging", "production", "restricted")
-        stacks = ("foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability")
+        stacks = (
+            "foundation",
+            "network",
+            "artifacts",
+            "data-services",
+            "clusters",
+            "ci-execution",
+            "observability",
+        )
         tofu_files = ("main", "variables", "outputs")
-        live_files = ("backend.tf", "versions.tf", "providers.tf", "main.tf", "environment.auto.tfvars.json", "outputs.tf")
+        live_files = (
+            "backend.tf",
+            "versions.tf",
+            "providers.tf",
+            "main.tf",
+            "environment.auto.tfvars.json",
+            "outputs.tf",
+        )
         modules = (
-            "project-factory", "shared-vpc", "private-dns", "controlled-egress",
-            "artifact-registry", "artifact-bucket", "cloud-sql-postgres",
-            "pubsub-transport", "secret-bindings", "delegated-kms",
-            "gke-regional-cluster", "gke-node-pool", "workload-identity",
-            "observability-backend", "buildkite-agents", "argocd-management",
+            "project-factory",
+            "shared-vpc",
+            "private-dns",
+            "controlled-egress",
+            "artifact-registry",
+            "artifact-bucket",
+            "cloud-sql-postgres",
+            "pubsub-transport",
+            "secret-bindings",
+            "delegated-kms",
+            "gke-regional-cluster",
+            "gke-node-pool",
+            "workload-identity",
+            "observability-backend",
+            "buildkite-agents",
+            "argocd-management",
         )
         policies = (
-            "organization_constraints", "network_boundaries", "workload_identity",
-            "encryption_and_retention", "database_recovery", "gke_security",
-            "accelerator_isolation", "cost_guardrails",
+            "organization_constraints",
+            "network_boundaries",
+            "workload_identity",
+            "encryption_and_retention",
+            "database_recovery",
+            "gke_security",
+            "accelerator_isolation",
+            "cost_guardrails",
         )
         expected = {
-            ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel",
-            "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile",
-            ".github/CODEOWNERS", ".github/actionlint.yaml", ".github/dependabot.yml",
+            ".editorconfig",
+            ".gitignore",
+            ".golangci.yml",
+            ".markdownlint-cli2.yaml",
+            ".pre-commit-config.yaml",
+            ".vscode/extensions.json",
+            ".vscode/settings.json",
+            ".yamllint.yaml",
+            "BUILD.bazel",
+            "CONTRIBUTING.md",
+            "LICENSE",
+            "MODULE.bazel",
+            "README.md",
+            "SECURITY.md",
+            "component.yaml",
+            "flake.lock",
+            "flake.nix",
+            "justfile",
+            "biome.json",
+            "pyproject.toml",
+            ".github/CODEOWNERS",
+            ".github/actionlint.yaml",
+            ".github/dependabot.yml",
             ".github/pull_request_template.md",
-            *{f".github/workflows/{name}.yml" for name in (
-                "pull-request", "drift-detection", "protected-apply", "disaster-recovery",
-            )},
-            *{f"catalog/{name}.yaml" for name in (
-                "environments", "regions", "project-classes", "data-classes",
-                "resource-profiles", "accelerator-profiles", "service-capabilities",
-            )},
-            *{f"schemas/v1/{name}.schema.json" for name in (
-                "environment", "region", "project_class", "data_class", "resource_profile",
-                "accelerator_profile", "service_capability", "infrastructure_export",
-            )},
-            *{f"opentofu/modules/gcp/{module}/{name}.tf" for module in modules for name in tofu_files},
+            *{
+                f".github/workflows/{name}.yml"
+                for name in (
+                    "pull-request",
+                    "drift-detection",
+                    "protected-apply",
+                    "disaster-recovery",
+                )
+            },
+            *{
+                f"catalog/{name}.yaml"
+                for name in (
+                    "environments",
+                    "regions",
+                    "project-classes",
+                    "data-classes",
+                    "resource-profiles",
+                    "accelerator-profiles",
+                    "service-capabilities",
+                )
+            },
+            *{
+                f"schemas/v1/{name}.schema.json"
+                for name in (
+                    "environment",
+                    "region",
+                    "project_class",
+                    "data_class",
+                    "resource_profile",
+                    "accelerator_profile",
+                    "service_capability",
+                    "infrastructure_export",
+                )
+            },
+            *{
+                f"opentofu/modules/gcp/{module}/{name}.tf"
+                for module in modules
+                for name in tofu_files
+            },
             *{f"opentofu/stacks/{stack}/{name}.tf" for stack in stacks for name in tofu_files},
-            *{f"opentofu/live/{environment}/{stack}/{name}" for environment in environments for stack in stacks for name in live_files},
+            *{
+                f"opentofu/live/{environment}/{stack}/{name}"
+                for environment in environments
+                for stack in stacks
+                for name in live_files
+            },
             *{f"policy/{name}.rego" for name in policies},
             *{f"policy/tests/{name}_test.rego" for name in policies},
             "tests/contract/test_environment_plan.py",
-            *{f"tests/plan/test_{name}_plan.py" for name in ("development", "staging", "production")},
+            *{
+                f"tests/plan/test_{name}_plan.py"
+                for name in ("development", "staging", "production")
+            },
             "tests/security/test_cross_environment_denial.py",
             "tests/failure/test_partial_apply_reconciliation.py",
             "tests/drift/test_cloud_drift_classification.py",
-            "tests/recovery/test_database_restore.py", "tests/recovery/test_artifact_restore.py",
+            "tests/recovery/test_database_restore.py",
+            "tests/recovery/test_artifact_restore.py",
             "tests/capacity/test_accelerator_profile.py",
-            "tooling/cmd/infractl/main.go", "tooling/go.mod", "tooling/go.sum", "tooling/BUILD.bazel",
-            *{f"tooling/internal/{name}/{name}.go" for name in ("catalog", "plan", "policy", "drift", "exports")},
-            *{f"runbooks/{name}.md" for name in (
-                "infrastructure-apply-failure", "cloud-drift", "network-isolation-failure",
-                "cluster-control-plane-failure", "database-failover-and-restore",
-                "artifact-storage-recovery", "regional-recovery",
-            )},
+            "tooling/cmd/infractl/main.go",
+            "tooling/go.mod",
+            "tooling/go.sum",
+            "tooling/BUILD.bazel",
+            *{
+                f"tooling/internal/{name}/{name}.go"
+                for name in ("catalog", "plan", "policy", "drift", "exports")
+            },
+            *{
+                f"runbooks/{name}.md"
+                for name in (
+                    "infrastructure-apply-failure",
+                    "cloud-drift",
+                    "network-isolation-failure",
+                    "cluster-control-plane-failure",
+                    "database-failover-and-restore",
+                    "artifact-storage-recovery",
+                    "regional-recovery",
+                )
+            },
         }
-        ignored_directories = {".git", "__pycache__", ".pytest_cache", ".terraform"}
+        ignored_directories = {
+            ".git",
+            ".ruff_cache",
+            "__pycache__",
+            ".pytest_cache",
+            ".terraform",
+        }
         actual = set()
         empty = []
         source_symlinks = []
@@ -216,10 +375,15 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             relative_directory = Path(directory).relative_to(ROOT)
             for child in children:
                 child_path = Path(directory) / child
-                if child_path.is_symlink() and child not in ignored_directories and not child.startswith("bazel-"):
+                if (
+                    child_path.is_symlink()
+                    and child not in ignored_directories
+                    and not child.startswith("bazel-")
+                ):
                     source_symlinks.append((relative_directory / child).as_posix())
             children[:] = [
-                child for child in children
+                child
+                for child in children
                 if child not in ignored_directories and not child.startswith("bazel-")
             ]
             for name in files:
@@ -227,14 +391,16 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 relative = path.relative_to(ROOT).as_posix()
                 if name == ".DS_Store" or name.endswith((".pyc", ".pyo")):
                     continue
-                if relative_directory == Path(".") and name.startswith("bazel-") and path.is_symlink():
+                if relative_directory == Path() and name.startswith("bazel-") and path.is_symlink():
                     continue
                 if path.is_symlink():
                     source_symlinks.append(relative)
                 if path.stat().st_size == 0:
                     empty.append(relative)
                 actual.add(relative)
-        self.assertEqual(source_symlinks, [], "Blueprint source paths must be regular, non-symlink files")
+        self.assertEqual(
+            source_symlinks, [], "Blueprint source paths must be regular, non-symlink files"
+        )
         self.assertEqual(empty, [], "Blueprint source files must be non-empty")
         self.assertEqual(actual, expected)
 
@@ -295,8 +461,12 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("needs: [preflight, plan]", workflow)
         self.assertIn("infrastructure-live-${ENVIRONMENT}-plan", workflow)
         self.assertIn("infrastructure-live-${ENVIRONMENT}-apply", workflow)
-        self.assertIn("https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/plan", workflow)
-        self.assertIn("https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/apply", workflow)
+        self.assertIn(
+            "https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/plan", workflow
+        )
+        self.assertIn(
+            "https://github.mindclade.io/oidc/infrastructure-live/${ENVIRONMENT}/apply", workflow
+        )
         self.assertIn("GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_DEVELOPMENT_PLAN", workflow)
         self.assertIn("GCP_WIF_PROVIDER_INFRASTRUCTURE_LIVE_RESTRICTED_APPLY", workflow)
         self.assertIn('plan_log="${RUNNER_TEMP}/reviewed.plan.log"', step)
@@ -330,9 +500,14 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         final_cleanup = workflow_step_source(workflow, "Remove transient plan material")
 
         self.assertIn('plan_log="${RUNNER_TEMP}/post-apply.plan.log"', step)
-        self.assertIn("matrix:\n        environment: [development, staging, production, restricted]", workflow)
+        self.assertIn(
+            "matrix:\n        environment: [development, staging, production, restricted]", workflow
+        )
         self.assertNotIn("matrix.stack", workflow)
-        self.assertIn("for stack in foundation network artifacts data-services clusters ci-execution observability", step)
+        self.assertIn(
+            "for stack in foundation network artifacts data-services clusters ci-execution observability",
+            step,
+        )
         self.assertIn('-out="${saved_plan}" >>"${plan_log}" 2>&1', step)
         self.assertIn('"${RUNNER_TEMP}/infractl" plan classify', step)
         self.assertIn("{creates, updates, deletes, replaces, reads, noOps, safe}", step)
@@ -372,16 +547,19 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             workflow.index("Apply only the verified saved plan"),
         )
         for required in (
-            "EC_SIGN_P256_SHA256", '(.protectionLevel == "HSM")',
-            '(.state == "ENABLED")', "gcloud kms asymmetric-sign",
-            "exports kms-readiness", "--trusted-public-key-base64",
+            "EC_SIGN_P256_SHA256",
+            '(.protectionLevel == "HSM")',
+            '(.state == "ENABLED")',
+            "gcloud kms asymmetric-sign",
+            "exports kms-readiness",
+            "--trusted-public-key-base64",
         ):
             self.assertIn(required, readiness)
         self.assertIn('tofu -chdir="${root}" output -json |', completion)
         self.assertNotIn("output -json resources", completion)
         self.assertIn("exports resources", completion)
         self.assertIn('receipt_digest="sha256:', completion)
-        self.assertIn("--provenance-digest \"${receipt_digest}\"", completion)
+        self.assertIn('--provenance-digest "${receipt_digest}"', completion)
         self.assertIn("exports emit", completion)
         self.assertIn("--trusted-key-version", completion)
         self.assertIn("apply-receipt.json infrastructure-export.json", completion)
@@ -391,9 +569,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
     def test_drift_evidence_records_policy_outcome_without_policy_contents(self):
         workflow = workflow_source("drift-detection.yml")
         step = workflow_step_source(workflow, "Create a read-only drift plan and redacted evidence")
-        authentication = workflow_step_source(
-            workflow, "Authenticate the read-only plan identity"
-        )
+        authentication = workflow_step_source(workflow, "Authenticate the read-only plan identity")
 
         self.assertIn("    environment: trusted-build", workflow)
         self.assertNotIn("environment: infrastructure-${{ matrix.environment }}-plan", workflow)
@@ -411,7 +587,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertNotIn("--slurpfile policy", step)
         self.assertIn('rm -rf "${work_dir}"', step)
         self.assertIn("infrastructure.mindclade.dev/drift-manifest/v1", step)
-        self.assertIn('printf \'failure_count=%s\\n\'', step)
+        self.assertIn("printf 'failure_count=%s\\n'", step)
         self.assertNotIn('cat "${plan_log}"', step)
         self.assertNotIn('tee "${plan_log}"', step)
 
@@ -465,25 +641,37 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         }
         base_profiles = [
             {
-                "name": "development", "highAvailabilityRequired": False,
-                "deletionProtectionRequired": True, "backupRetentionDays": 7,
-                "minimumZones": 1, "costGuardrail": "low",
+                "name": "development",
+                "highAvailabilityRequired": False,
+                "deletionProtectionRequired": True,
+                "backupRetentionDays": 7,
+                "minimumZones": 1,
+                "costGuardrail": "low",
             },
             {
-                "name": "staging", "highAvailabilityRequired": True,
-                "deletionProtectionRequired": True, "backupRetentionDays": 14,
-                "minimumZones": 2, "costGuardrail": "moderate",
+                "name": "staging",
+                "highAvailabilityRequired": True,
+                "deletionProtectionRequired": True,
+                "backupRetentionDays": 14,
+                "minimumZones": 2,
+                "costGuardrail": "moderate",
             },
             {
-                "name": "production", "highAvailabilityRequired": True,
-                "deletionProtectionRequired": True, "backupRetentionDays": 35,
-                "minimumZones": 3, "costGuardrail": "reliability-first",
+                "name": "production",
+                "highAvailabilityRequired": True,
+                "deletionProtectionRequired": True,
+                "backupRetentionDays": 35,
+                "minimumZones": 3,
+                "costGuardrail": "reliability-first",
                 "ciEvidenceArchive": archive,
             },
             {
-                "name": "restricted", "highAvailabilityRequired": True,
-                "deletionProtectionRequired": True, "backupRetentionDays": 35,
-                "minimumZones": 3, "costGuardrail": "security-first",
+                "name": "restricted",
+                "highAvailabilityRequired": True,
+                "deletionProtectionRequired": True,
+                "backupRetentionDays": 35,
+                "minimumZones": 3,
+                "costGuardrail": "security-first",
             },
         ]
 
@@ -520,7 +708,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             archive["retentionLocked"] = True
             archive["retentionLockReceipt"] = {
                 "receiptVersion": "ci-evidence-retention-lock/v1",
-                "canaryObjectUri": "gs://bucket/qualification/canary/" + "a" * 40 + "/evidence.json#42",
+                "canaryObjectUri": "gs://bucket/qualification/canary/"
+                + "a" * 40
+                + "/evidence.json#42",
                 "canaryGeneration": "42",
                 "verifierIdentity": "serviceAccount:ci-evidence-verifier@identity-project.iam.gserviceaccount.com",
                 "verifierDigest": "sha256:" + "b" * 64,
@@ -544,12 +734,42 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
     def test_catalog_validation_resolves_references_and_activation(self):
         mutations = [
-            ("catalog/environments.yaml", "regionProfile: central-us", "regionProfile: missing-region", "unknown region"),
-            ("catalog/project-classes.yaml", "allowedEnvironmentTiers: [development]", "allowedEnvironmentTiers: [staging]", "disallowed tier"),
-            ("catalog/environments.yaml", "enabled: false", "enabled: true", "incoherent activation"),
-            ("catalog/resource-profiles.yaml", "name: staging", "name: development", "duplicate name"),
-            ("catalog/service-capabilities.yaml", "dns.googleapis.com", "iamcredentials.googleapis.com", "unapproved required API"),
-            ("catalog/service-capabilities.yaml", "log-bucket, metrics-scope", "log-bucket, project", "mismatched export kind"),
+            (
+                "catalog/environments.yaml",
+                "regionProfile: central-us",
+                "regionProfile: missing-region",
+                "unknown region",
+            ),
+            (
+                "catalog/project-classes.yaml",
+                "allowedEnvironmentTiers: [development]",
+                "allowedEnvironmentTiers: [staging]",
+                "disallowed tier",
+            ),
+            (
+                "catalog/environments.yaml",
+                "enabled: false",
+                "enabled: true",
+                "incoherent activation",
+            ),
+            (
+                "catalog/resource-profiles.yaml",
+                "name: staging",
+                "name: development",
+                "duplicate name",
+            ),
+            (
+                "catalog/service-capabilities.yaml",
+                "dns.googleapis.com",
+                "iamcredentials.googleapis.com",
+                "unapproved required API",
+            ),
+            (
+                "catalog/service-capabilities.yaml",
+                "log-bucket, metrics-scope",
+                "log-bucket, project",
+                "mismatched export kind",
+            ),
         ]
         for relative_path, original, replacement, label in mutations:
             with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
@@ -570,7 +790,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             shutil.copytree(ROOT / "catalog", candidate / "catalog")
             shutil.copytree(ROOT / "schemas", candidate / "schemas")
             shutil.copytree(ROOT / "opentofu", candidate / "opentofu")
-            contract = candidate / "opentofu/live/development/foundation/environment.auto.tfvars.json"
+            contract = (
+                candidate / "opentofu/live/development/foundation/environment.auto.tfvars.json"
+            )
             document = json.loads(contract.read_text(encoding="utf-8"))
             self.assertIs(document["enabled"], False)
             document["enabled"] = True
@@ -586,7 +808,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             shutil.copytree(ROOT / "catalog", candidate / "catalog")
             shutil.copytree(ROOT / "schemas", candidate / "schemas")
             shutil.copytree(ROOT / "opentofu", candidate / "opentofu")
-            contract = candidate / "opentofu/live/restricted/data-services/environment.auto.tfvars.json"
+            contract = (
+                candidate / "opentofu/live/restricted/data-services/environment.auto.tfvars.json"
+            )
             document = json.loads(contract.read_text(encoding="utf-8"))
             document["approved_iam_principals"] = [
                 "serviceAccount:worker@restricted-project.iam.gserviceaccount.com",
@@ -595,7 +819,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
             result = run_infractl("catalog", "validate", "--root", str(candidate))
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("approved_iam_principals must equal the environment-wide set", result.stderr)
+            self.assertIn(
+                "approved_iam_principals must equal the environment-wide set", result.stderr
+            )
 
     def test_enabled_live_locations_must_equal_catalog_primary_location(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -606,7 +832,11 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
             environments = candidate / "catalog/environments.yaml"
             source = environments.read_text(encoding="utf-8")
-            source = source.replace("  - name: development\n    enabled: false", "  - name: development\n    enabled: true", 1)
+            source = source.replace(
+                "  - name: development\n    enabled: false",
+                "  - name: development\n    enabled: true",
+                1,
+            )
             environments.write_text(source, encoding="utf-8")
 
             regions = candidate / "catalog/regions.yaml"
@@ -620,11 +850,21 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
             accelerators = candidate / "catalog/accelerator-profiles.yaml"
             source = accelerators.read_text(encoding="utf-8")
-            source = source.replace("  - name: gpu-development\n    enabled: false", "  - name: gpu-development\n    enabled: true", 1)
-            source = source.replace("    regionBinding: null\n    quotaBinding: null", "    regionBinding: us-central1\n    quotaBinding: gpu_dev_quota", 1)
+            source = source.replace(
+                "  - name: gpu-development\n    enabled: false",
+                "  - name: gpu-development\n    enabled: true",
+                1,
+            )
+            source = source.replace(
+                "    regionBinding: null\n    quotaBinding: null",
+                "    regionBinding: us-central1\n    quotaBinding: gpu_dev_quota",
+                1,
+            )
             accelerators.write_text(source, encoding="utf-8")
 
-            for contract in sorted((candidate / "opentofu/live/development").glob("*/environment.auto.tfvars.json")):
+            for contract in sorted(
+                (candidate / "opentofu/live/development").glob("*/environment.auto.tfvars.json")
+            ):
                 document = json.loads(contract.read_text(encoding="utf-8"))
                 document["enabled"] = True
                 stack = contract.parts[-2]
@@ -641,7 +881,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
             result = run_infractl("catalog", "validate", "--root", str(candidate))
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("config.region must equal catalog primaryLocation us-central1", result.stderr)
+            self.assertIn(
+                "config.region must equal catalog primaryLocation us-central1", result.stderr
+            )
 
     def test_every_state_root_is_present_and_disabled(self):
         files = sorted((ROOT / "opentofu/live").glob("*/*/environment.auto.tfvars.json"))
@@ -653,21 +895,31 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             seen.add((environment, stack))
             self.assertEqual(document["environment"], environment)
             self.assertIs(document["enabled"], False)
-        self.assertEqual(seen, {(environment, stack) for environment in ENVIRONMENTS for stack in STACKS})
+        self.assertEqual(
+            seen, {(environment, stack) for environment in ENVIRONMENTS for stack in STACKS}
+        )
 
     def test_export_contract_requires_nonempty_immutable_resources(self):
-        schema = json.loads((ROOT / "schemas/v1/infrastructure_export.schema.json").read_text(encoding="utf-8"))
+        schema = json.loads(
+            (ROOT / "schemas/v1/infrastructure_export.schema.json").read_text(encoding="utf-8")
+        )
         resources = schema["properties"]["spec"]["properties"]["resources"]
         self.assertEqual(resources.get("minItems"), 1)
         self.assertIs(resources.get("uniqueItems"), True)
         self.assertFalse(schema["additionalProperties"])
         metadata = schema["properties"]["metadata"]
         for field in (
-            "planDigest", "providerLockDigest", "backendStateDigest",
-            "backendLineage", "backendSerial", "sourceCommit",
+            "planDigest",
+            "providerLockDigest",
+            "backendStateDigest",
+            "backendLineage",
+            "backendSerial",
+            "sourceCommit",
         ):
             self.assertIn(field, metadata["required"])
-        signature = schema["properties"]["spec"]["properties"]["evidence"]["properties"]["signature"]
+        signature = schema["properties"]["spec"]["properties"]["evidence"]["properties"][
+            "signature"
+        ]
         self.assertEqual(signature["properties"]["algorithm"]["const"], "EC_SIGN_P256_SHA256")
         self.assertEqual(
             set(signature["required"]),
@@ -679,46 +931,87 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         capability_kinds = set()
         for values in re.findall(r"exportKinds: \[([^]]+)\]", capability_source):
             capability_kinds.update(value.strip() for value in values.split(","))
-        schema = json.loads((ROOT / "schemas/v1/infrastructure_export.schema.json").read_text(encoding="utf-8"))
-        schema_kinds = set(schema["properties"]["spec"]["properties"]["resources"]["items"]["properties"]["kind"]["enum"])
+        schema = json.loads(
+            (ROOT / "schemas/v1/infrastructure_export.schema.json").read_text(encoding="utf-8")
+        )
+        schema_kinds = set(
+            schema["properties"]["spec"]["properties"]["resources"]["items"]["properties"]["kind"][
+                "enum"
+            ]
+        )
         self.assertEqual(capability_kinds, schema_kinds)
 
     def test_actual_tofu_outputs_are_strictly_reduced_to_typed_capabilities(self):
         fixtures = {
-            "foundation": ({"project_id": "mindclade-dev", "project_number": "123456", "enabled_services": []}, {"project"}),
-            "network": ({
-                "network_id": "projects/mindclade-dev/global/networks/platform",
-                "service_project_ids": [],
-                "subnetwork_ids": {"platform-subnet": "projects/mindclade-dev/regions/us-central1/subnetworks/platform-subnet"},
-                "private_service_connection": "servicenetworking-googleapis-com",
-                "private_dns_zone_ids": {},
-                "egress_addresses": {},
-            }, {"network", "subnetwork"}),
-            "artifacts": ({
-                "repository_ids": {"platform-images": "projects/mindclade-dev/locations/us-central1/repositories/platform-images"},
-                "bucket_ids": {},
-                "kms_key_ids": {"artifacts": "projects/mindclade-dev/locations/us-central1/keyRings/platform/cryptoKeys/artifacts"},
-                "ci_evidence_archive": {},
-            }, {"artifact-registry", "kms-key-reference"}),
-            "data-services": ({
-                "database_instance_id": "mindclade-dev/postgres-primary",
-                "database_connection_name": "mindclade-dev:us-central1:postgres-primary",
-                "topic_ids": {}, "subscription_ids": {}, "secret_references": {}, "kms_key_ids": {},
-            }, {"database-instance"}),
-            "clusters": ({
-                "cluster_id": "projects/mindclade-dev/locations/us-central1/clusters/platform",
-                "cluster_name": "platform", "workload_identity_pool": "mindclade-dev.svc.id.goog",
-                "node_pool_ids": {}, "workload_service_accounts": {},
-                "argocd_prerequisite_identity": None, "cluster_membership_ids": {},
-            }, {"gke-cluster", "workload-identity-pool"}),
-            "ci-execution": ({
-                "service_account_email": "ci@mindclade-dev.iam.gserviceaccount.com",
-                "instance_group_id": "projects/mindclade-dev/regions/us-central1/instanceGroupManagers/buildkite-agents",
-            }, {"build-execution-pool"}),
-            "observability": ({
-                "log_bucket_id": "projects/mindclade-dev/locations/global/buckets/platform",
-                "metrics_scope": "mindclade-dev", "sink_writer_identities": {}, "kms_key_ids": {},
-            }, {"log-bucket", "metrics-scope"}),
+            "foundation": (
+                {"project_id": "mindclade-dev", "project_number": "123456", "enabled_services": []},
+                {"project"},
+            ),
+            "network": (
+                {
+                    "network_id": "projects/mindclade-dev/global/networks/platform",
+                    "service_project_ids": [],
+                    "subnetwork_ids": {
+                        "platform-subnet": "projects/mindclade-dev/regions/us-central1/subnetworks/platform-subnet"
+                    },
+                    "private_service_connection": "servicenetworking-googleapis-com",
+                    "private_dns_zone_ids": {},
+                    "egress_addresses": {},
+                },
+                {"network", "subnetwork"},
+            ),
+            "artifacts": (
+                {
+                    "repository_ids": {
+                        "platform-images": "projects/mindclade-dev/locations/us-central1/repositories/platform-images"
+                    },
+                    "bucket_ids": {},
+                    "kms_key_ids": {
+                        "artifacts": "projects/mindclade-dev/locations/us-central1/keyRings/platform/cryptoKeys/artifacts"
+                    },
+                    "ci_evidence_archive": {},
+                },
+                {"artifact-registry", "kms-key-reference"},
+            ),
+            "data-services": (
+                {
+                    "database_instance_id": "mindclade-dev/postgres-primary",
+                    "database_connection_name": "mindclade-dev:us-central1:postgres-primary",
+                    "topic_ids": {},
+                    "subscription_ids": {},
+                    "secret_references": {},
+                    "kms_key_ids": {},
+                },
+                {"database-instance"},
+            ),
+            "clusters": (
+                {
+                    "cluster_id": "projects/mindclade-dev/locations/us-central1/clusters/platform",
+                    "cluster_name": "platform",
+                    "workload_identity_pool": "mindclade-dev.svc.id.goog",
+                    "node_pool_ids": {},
+                    "workload_service_accounts": {},
+                    "argocd_prerequisite_identity": None,
+                    "cluster_membership_ids": {},
+                },
+                {"gke-cluster", "workload-identity-pool"},
+            ),
+            "ci-execution": (
+                {
+                    "service_account_email": "ci@mindclade-dev.iam.gserviceaccount.com",
+                    "instance_group_id": "projects/mindclade-dev/regions/us-central1/instanceGroupManagers/buildkite-agents",
+                },
+                {"build-execution-pool"},
+            ),
+            "observability": (
+                {
+                    "log_bucket_id": "projects/mindclade-dev/locations/global/buckets/platform",
+                    "metrics_scope": "mindclade-dev",
+                    "sink_writer_identities": {},
+                    "kms_key_ids": {},
+                },
+                {"log-bucket", "metrics-scope"},
+            ),
         }
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -726,12 +1019,27 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 with self.subTest(stack=stack):
                     input_path = directory / f"{stack}.input.json"
                     output_path = directory / f"{stack}.resources.json"
-                    input_path.write_text(json.dumps({
-                        "resources": {"sensitive": False, "type": ["object", {}], "value": value},
-                    }), encoding="utf-8")
+                    input_path.write_text(
+                        json.dumps(
+                            {
+                                "resources": {
+                                    "sensitive": False,
+                                    "type": ["object", {}],
+                                    "value": value,
+                                },
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
                     result = run_infractl(
-                        "exports", "resources", "--stack", stack,
-                        "--input", str(input_path), "--output", str(output_path),
+                        "exports",
+                        "resources",
+                        "--stack",
+                        stack,
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     resources = json.loads(output_path.read_text(encoding="utf-8"))
@@ -740,11 +1048,48 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
     def test_actual_tofu_output_reduction_fails_closed_on_null_unknown_or_unsafe_values(self):
         invalid = [
-            {"resources": {"sensitive": True, "type": ["object", {}], "value": {"project_id": "mindclade-dev", "project_number": "1", "enabled_services": []}}},
+            {
+                "resources": {
+                    "sensitive": True,
+                    "type": ["object", {}],
+                    "value": {
+                        "project_id": "mindclade-dev",
+                        "project_number": "1",
+                        "enabled_services": [],
+                    },
+                }
+            },
             {"resources": {"sensitive": False, "type": ["object", {}], "value": None}},
-            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": None, "project_number": "1", "enabled_services": []}}},
-            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": "mindclade-dev", "project_number": "1", "enabled_services": [], "token": "invented"}}},
-            {"resources": {"sensitive": False, "type": ["object", {}], "value": {"project_id": "mindclade-dev?token=x", "project_number": "1", "enabled_services": []}}},
+            {
+                "resources": {
+                    "sensitive": False,
+                    "type": ["object", {}],
+                    "value": {"project_id": None, "project_number": "1", "enabled_services": []},
+                }
+            },
+            {
+                "resources": {
+                    "sensitive": False,
+                    "type": ["object", {}],
+                    "value": {
+                        "project_id": "mindclade-dev",
+                        "project_number": "1",
+                        "enabled_services": [],
+                        "token": "invented",
+                    },
+                }
+            },
+            {
+                "resources": {
+                    "sensitive": False,
+                    "type": ["object", {}],
+                    "value": {
+                        "project_id": "mindclade-dev?token=x",
+                        "project_number": "1",
+                        "enabled_services": [],
+                    },
+                }
+            },
         ]
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -754,8 +1099,14 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                     output_path = directory / f"invalid-{index}.out.json"
                     input_path.write_text(json.dumps(value), encoding="utf-8")
                     result = run_infractl(
-                        "exports", "resources", "--stack", "foundation",
-                        "--input", str(input_path), "--output", str(output_path),
+                        "exports",
+                        "resources",
+                        "--stack",
+                        "foundation",
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
                     )
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(output_path.exists())
@@ -766,9 +1117,11 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             message = b"mindclade infrastructure-export readiness challenge\n"
             public_der, signature = test_p256_sign(message)
             encoded = base64.b64encode(public_der).decode("ascii")
-            public_pem = "-----BEGIN PUBLIC KEY-----\n" + "\n".join(
-                encoded[index:index + 64] for index in range(0, len(encoded), 64)
-            ) + "\n-----END PUBLIC KEY-----\n"
+            public_pem = (
+                "-----BEGIN PUBLIC KEY-----\n"
+                + "\n".join(encoded[index : index + 64] for index in range(0, len(encoded), 64))
+                + "\n-----END PUBLIC KEY-----\n"
+            )
             observed = directory / "observed.pem"
             challenge = directory / "challenge"
             detached = directory / "challenge.sig"
@@ -779,12 +1132,20 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             trusted_b64 = base64.b64encode(public_pem.encode("ascii")).decode("ascii")
             digest = "sha256:" + hashlib.sha256(public_der).hexdigest()
             arguments = [
-                "exports", "kms-readiness",
-                "--trusted-public-key-base64", trusted_b64,
-                "--observed-public-key", str(observed),
-                "--trusted-public-key-digest", digest,
-                "--message", str(challenge), "--signature", str(detached),
-                "--output-public-key-der", str(output_der),
+                "exports",
+                "kms-readiness",
+                "--trusted-public-key-base64",
+                trusted_b64,
+                "--observed-public-key",
+                str(observed),
+                "--trusted-public-key-digest",
+                digest,
+                "--message",
+                str(challenge),
+                "--signature",
+                str(detached),
+                "--output-public-key-der",
+                str(output_der),
             ]
             result = run_infractl(*arguments)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -797,9 +1158,16 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
     def test_export_emission_is_complete_and_canonical(self):
         with tempfile.TemporaryDirectory() as directory:
-            result, output = signed_export(directory, [
-                {"kind": "project", "name": "logical-project", "uri": "//cloudresourcemanager.googleapis.com/projects/logical-project"},
-            ])
+            result, output = signed_export(
+                directory,
+                [
+                    {
+                        "kind": "project",
+                        "name": "logical-project",
+                        "uri": "//cloudresourcemanager.googleapis.com/projects/logical-project",
+                    },
+                ],
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             raw = output.read_text(encoding="utf-8")
             self.assertEqual(raw, json.dumps(json.loads(raw), separators=(",", ":")) + "\n")
@@ -807,16 +1175,25 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             self.assertEqual(document["metadata"]["root"], "opentofu/live/development/foundation")
             self.assertEqual(document["metadata"]["backendSerial"], 17)
             self.assertEqual(document["spec"]["resources"][0]["name"], "logical-project")
-            self.assertEqual(document["spec"]["evidence"]["signature"]["algorithm"], "EC_SIGN_P256_SHA256")
+            self.assertEqual(
+                document["spec"]["evidence"]["signature"]["algorithm"], "EC_SIGN_P256_SHA256"
+            )
 
     def test_export_emission_binds_resource_kinds_to_their_producing_stack(self):
         with tempfile.TemporaryDirectory() as directory:
+
             def emit(stack, kind):
-                result, output = signed_export(directory, [{
-                    "kind": kind,
-                    "name": "logical-database",
-                    "uri": "//sqladmin.googleapis.com/projects/logical-project/instances/logical-database",
-                }], stack=stack)
+                result, output = signed_export(
+                    directory,
+                    [
+                        {
+                            "kind": kind,
+                            "name": "logical-database",
+                            "uri": "//sqladmin.googleapis.com/projects/logical-project/instances/logical-database",
+                        }
+                    ],
+                    stack=stack,
+                )
                 return result, output
 
             rejected, output = emit("foundation", "database-instance")
@@ -833,13 +1210,20 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
     def test_export_emission_rejects_credential_bearing_or_mutable_uris(self):
         with tempfile.TemporaryDirectory() as directory:
+
             def emit(resource_uri, provenance_uri):
-                return signed_export(directory, [
-                    {"kind": "project", "name": "logical-project", "uri": resource_uri},
-                ], provenance_uri=provenance_uri)
+                return signed_export(
+                    directory,
+                    [
+                        {"kind": "project", "name": "logical-project", "uri": resource_uri},
+                    ],
+                    provenance_uri=provenance_uri,
+                )
 
             safe_resource = "//cloudresourcemanager.googleapis.com/projects/logical-project"
-            safe_provenance = "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
+            safe_provenance = (
+                "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1"
+            )
             invalid_resources = [
                 "//identity@cloudresourcemanager.googleapis.com/projects/logical-project",
                 "//cloudresourcemanager.googleapis.com/projects/logical-project?version=1",
@@ -876,27 +1260,40 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "uri": "//cloudresourcemanager.googleapis.com/projects/logical-project",
         }
         with tempfile.TemporaryDirectory() as directory:
+
             def tamper_resources(resources_path, _signature_path):
                 document = json.loads(resources_path.read_text(encoding="utf-8"))
                 document[0]["name"] = "tampered-project"
                 resources_path.write_text(json.dumps(document), encoding="utf-8")
 
             result, output = signed_export(
-                directory, [resource], tamper_payload=tamper_resources,
+                directory,
+                [resource],
+                tamper_payload=tamper_resources,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("payloadDigest does not match the canonical export payload", result.stderr)
+            self.assertIn(
+                "payloadDigest does not match the canonical export payload", result.stderr
+            )
             self.assertFalse(output.exists())
 
         with tempfile.TemporaryDirectory() as directory:
+
             def invent_reference(_resources_path, signature_path):
-                signature_path.write_text(json.dumps({
-                    "uri": "https://evidence.example/signatures/invented",
-                    "digest": "sha256:" + "1" * 64,
-                }), encoding="utf-8")
+                signature_path.write_text(
+                    json.dumps(
+                        {
+                            "uri": "https://evidence.example/signatures/invented",
+                            "digest": "sha256:" + "1" * 64,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
 
             result, output = signed_export(
-                directory, [resource], tamper_payload=invent_reference,
+                directory,
+                [resource],
+                tamper_payload=invent_reference,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("independently supplied trusted KMS key version", result.stderr)
@@ -904,7 +1301,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             result, output = signed_export(
-                directory, [resource], trusted_public_key_digest="sha256:" + "9" * 64,
+                directory,
+                [resource],
+                trusted_public_key_digest="sha256:" + "9" * 64,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("independently supplied trusted public-key digest", result.stderr)

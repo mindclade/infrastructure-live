@@ -130,7 +130,7 @@ func validateCapabilities(root string, documents map[string]any) error {
 	for _, stack := range liveStacks {
 		capability, exists := capabilities[stack]
 		if !exists {
-			problems = append(problems, fmt.Sprintf("service capability catalog is missing stack %s", stack))
+			problems = append(problems, "service capability catalog is missing stack "+stack)
 			continue
 		}
 		if !sameStringSet(stringSlice(capability["requiredApis"]), requiredAPIsByStack[stack]) {
@@ -259,7 +259,7 @@ func validateActivationBindings(root string, documents map[string]any) error {
 				problems = append(problems, fmt.Sprintf("%s environment must equal %s", relativePath, environmentName))
 			}
 			if binding.Enabled == nil {
-				problems = append(problems, fmt.Sprintf("%s must declare enabled", relativePath))
+				problems = append(problems, relativePath+" must declare enabled")
 			} else if *binding.Enabled != catalogEnabled {
 				problems = append(problems, fmt.Sprintf("%s enabled state must equal catalog environment %s", relativePath, environmentName))
 			}
@@ -270,7 +270,7 @@ func validateActivationBindings(root string, documents map[string]any) error {
 				canonicalIAMPrincipals = iamPrincipals
 				canonicalIAMPrincipalsSet = true
 			} else if iamPrincipals != canonicalIAMPrincipals {
-				problems = append(problems, fmt.Sprintf("%s approved_iam_principals must equal the environment-wide set", relativePath))
+				problems = append(problems, relativePath+" approved_iam_principals must equal the environment-wide set")
 			}
 			if _, referenceErr := exactStringSetKey(rawBinding["approved_resource_references"]); referenceErr != nil {
 				problems = append(problems, fmt.Sprintf("%s approved_resource_references: %v", relativePath, referenceErr))
@@ -371,16 +371,16 @@ func validateDocument(root, catalogPath, schemaPath string) (any, error) {
 		return nil, fmt.Errorf("read %s: %w", catalogPath, err)
 	}
 	var decoded any
-	if err := yaml.Unmarshal(data, &decoded); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", catalogPath, err)
+	if decodeErr := yaml.Unmarshal(data, &decoded); decodeErr != nil {
+		return nil, fmt.Errorf("parse %s: %w", catalogPath, decodeErr)
 	}
 	encoded, err := json.Marshal(decoded)
 	if err != nil {
 		return nil, fmt.Errorf("normalize %s: %w", catalogPath, err)
 	}
 	var document any
-	if err := json.Unmarshal(encoded, &document); err != nil {
-		return nil, fmt.Errorf("normalize %s: %w", catalogPath, err)
+	if decodeErr := json.Unmarshal(encoded, &document); decodeErr != nil {
+		return nil, fmt.Errorf("normalize %s: %w", catalogPath, decodeErr)
 	}
 	compiler := jsonschema.NewCompiler()
 	schema, err := compiler.Compile("file://" + filepath.ToSlash(filepath.Join(root, schemaPath)))

@@ -6,8 +6,8 @@
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "serviceCapabilities"],
   "properties": {
-    "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
-    "kind": {"const": "ServiceCapabilityCatalog"},
+    "apiVersion": { "const": "infrastructure.mindclade.dev/v1" },
+    "kind": { "const": "ServiceCapabilityCatalog" },
     "serviceCapabilities": {
       "type": "array",
       "minItems": 1,
@@ -16,10 +16,30 @@
         "additionalProperties": false,
         "required": ["name", "requiredApis", "exportKinds", "stateBoundary"],
         "properties": {
-          "name": {"enum": ["foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability"]},
-          "requiredApis": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9.-]+\\.googleapis\\.com$"}},
-          "exportKinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"}},
-          "stateBoundary": {"const": "per-environment"}
+          "name": {
+            "enum": [
+              "foundation",
+              "network",
+              "artifacts",
+              "data-services",
+              "clusters",
+              "ci-execution",
+              "observability"
+            ]
+          },
+          "requiredApis": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9.-]+\\.googleapis\\.com$" }
+          },
+          "exportKinds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" }
+          },
+          "stateBoundary": { "const": "per-environment" }
         }
       }
     }

@@ -64,8 +64,8 @@ deny contains message if {
 
 root_environment := object.get(object.get(object.get(input, "variables", {}), "environment", {}), "value", "")
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 mutates(actions) if {
 	some action in actions

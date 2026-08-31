@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -58,7 +59,7 @@ func Classify(data []byte) (Report, error) {
 		return Report{}, fmt.Errorf("parse OpenTofu plan JSON: %w", err)
 	}
 	if parsed.FormatVersion == "" {
-		return Report{}, fmt.Errorf("OpenTofu plan is missing format_version")
+		return Report{}, errors.New("OpenTofu plan is missing format_version")
 	}
 	digest, err := canonicalDigest(data)
 	if err != nil {
@@ -67,7 +68,7 @@ func Classify(data []byte) (Report, error) {
 	report := Report{Digest: digest, Safe: true, Changes: []Change{}}
 	for _, resource := range parsed.ResourceChanges {
 		if resource.Address == "" {
-			return Report{}, fmt.Errorf("plan contains a resource change without an address")
+			return Report{}, errors.New("plan contains a resource change without an address")
 		}
 		action, err := classifyActions(resource.Change.Actions)
 		if err != nil {
@@ -112,7 +113,7 @@ func canonicalDigest(data []byte) (string, error) {
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("OpenTofu plan JSON must be an object")
+		return "", errors.New("OpenTofu plan JSON must be an object")
 	}
 	delete(object, "timestamp")
 	canonical, err := json.Marshal(object)

@@ -1,10 +1,10 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,36 +44,52 @@ def run_reconciliation(desired, observed):
         actual.write_text(json.dumps(observed), encoding="utf-8")
         runfiles = Path(os.environ.get("TEST_SRCDIR", "/nonexistent"))
         binaries = sorted(
-            path for path in runfiles.rglob("infractl")
+            path
+            for path in runfiles.rglob("infractl")
             if path.is_file() and os.access(path, os.X_OK)
         )
         if binaries:
             command = [
-                str(binaries[0]), "reconciliation", "verify",
-                "--desired", str(expected), "--observed", str(actual),
+                str(binaries[0]),
+                "reconciliation",
+                "verify",
+                "--desired",
+                str(expected),
+                "--observed",
+                str(actual),
             ]
         else:
             binary = Path(directory) / "infractl"
             build = subprocess.run(
                 ["go", "build", "-o", str(binary), "./cmd/infractl"],
-                cwd=ROOT / "tooling", text=True, capture_output=True, check=False,
+                cwd=ROOT / "tooling",
+                text=True,
+                capture_output=True,
+                check=False,
             )
             if build.returncode != 0:
                 return build
             command = [
-                str(binary), "reconciliation", "verify",
-                "--desired", str(expected), "--observed", str(actual),
+                str(binary),
+                "reconciliation",
+                "verify",
+                "--desired",
+                str(expected),
+                "--observed",
+                str(actual),
             ]
         return subprocess.run(
-            command, cwd=ROOT, text=True, capture_output=True, check=False,
+            command,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
         )
 
 
 class PartialApplyReconciliationTest(unittest.TestCase):
     def test_failure_runbook_requires_the_structured_fail_closed_verifier(self):
-        runbook = (ROOT / "runbooks/infrastructure-apply-failure.md").read_text(
-            encoding="utf-8"
-        )
+        runbook = (ROOT / "runbooks/infrastructure-apply-failure.md").read_text(encoding="utf-8")
         for requirement in (
             "infractl reconciliation verify",
             "backend lineage",
@@ -85,7 +101,9 @@ class PartialApplyReconciliationTest(unittest.TestCase):
         ):
             self.assertIn(requirement, runbook)
 
-    def test_missing_changed_and_unmanaged_provider_resources_require_import_compare_and_replan(self):
+    def test_missing_changed_and_unmanaged_provider_resources_require_import_compare_and_replan(
+        self,
+    ):
         desired = reconciliation_document()
         observed = reconciliation_document(serial=18)
         observed["resources"] = [
@@ -110,9 +128,7 @@ class PartialApplyReconciliationTest(unittest.TestCase):
         )
         self.assertFalse(report["clean"])
         self.assertFalse(report["resumeAllowed"])
-        self.assertEqual(
-            report["nextAction"], "refresh-import-compare-then-replan"
-        )
+        self.assertEqual(report["nextAction"], "refresh-import-compare-then-replan")
         self.assertEqual(report["priorBackendSerial"], 17)
         self.assertEqual(report["observedBackendSerial"], 18)
         self.assertNotIn("projects/prod", result.stdout)
@@ -155,9 +171,7 @@ class PartialApplyReconciliationTest(unittest.TestCase):
             lambda observed: observed["backend"].update(
                 {"lineage": "123e4567-e89b-42d3-a456-426614174001"}
             ),
-            lambda observed: observed["resources"].append(
-                dict(observed["resources"][0])
-            ),
+            lambda observed: observed["resources"].append(dict(observed["resources"][0])),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):

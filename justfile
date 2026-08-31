@@ -5,13 +5,38 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-fmt:
+format:
+    biome check --write .
+    ruff format .
+    cd tooling && golangci-lint fmt --config ../.golangci.yml
+    opa fmt -w policy
     tofu fmt -recursive opentofu
-    gofmt -w tooling/cmd/infractl/main.go tooling/internal/*/*.go
+    git ls-files 'BUILD.bazel' 'MODULE.bazel' '*.bzl' | xargs buildifier -mode=fix
+    nixfmt flake.nix
+    just --fmt
 
-fmt-check:
+format-check:
+    biome check .
+    ruff format --check .
+    cd tooling && golangci-lint fmt --config ../.golangci.yml --diff
+    opa fmt --fail policy >/dev/null
     tofu fmt -check -recursive opentofu
-    @unformatted="$(gofmt -l tooling/cmd/infractl/main.go tooling/internal/*/*.go)"; test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+    git ls-files 'BUILD.bazel' 'MODULE.bazel' '*.bzl' | xargs buildifier -mode=check -lint=warn
+    nixfmt --check flake.nix
+    just --fmt --check
+
+fmt: format
+
+fmt-check: format-check
+
+lint:
+    biome lint .
+    ruff check .
+    pyright
+    cd tooling && golangci-lint run --config ../.golangci.yml ./...
+    actionlint .github/workflows/*.yml
+    yamllint --config-file .yamllint.yaml .
+    markdownlint-cli2
 
 validate-catalog:
     @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" catalog validate --root .
@@ -45,8 +70,6 @@ test-bazel:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$(uname -s)" == Darwin ]]; then
-      # Bazel owns its compiler/action environment. Do not leak Nix's Darwin
-      # linker flags into rules_go's separately declared C toolchain.
       unset NIX_BINTOOLS NIX_CC NIX_CFLAGS_COMPILE NIX_CFLAGS_LINK NIX_LDFLAGS
       export CC=/usr/bin/clang
       export CXX=/usr/bin/clang++
@@ -61,26 +84,31 @@ test-bazel:
     fi
     USE_BAZEL_VERSION=9.2.0 "$bazel_bin" --batch --output_user_root="$output_root/user" test //... --lockfile_mode=off --test_output=errors --symlink_prefix="$output_root/symlink-"
 
-validate: fmt-check validate-catalog validate-policy validate-tofu lint-ci
+flake-check:
+    nix flake check --no-build --no-update-lock-file
+
+check: format-check lint validate-catalog validate-policy validate-tofu test flake-check
+
+validate: check
 
 test: test-go test-python test-bazel
 
-ci: validate test
+ci: check
 
 plan-classify plan_json:
-    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" plan classify --input "{{plan_json}}"
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" plan classify --input "{{ plan_json }}"
 
 policy-verify:
     @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" policy verify --root .
 
 drift-classify desired observed:
-    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" drift classify --desired "{{desired}}" --observed "{{observed}}"
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" drift classify --desired "{{ desired }}" --observed "{{ observed }}"
 
 reconciliation-verify desired observed:
-    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" reconciliation verify --desired "{{desired}}" --observed "{{observed}}"
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" reconciliation verify --desired "{{ desired }}" --observed "{{ observed }}"
 
 export-payload args:
-    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports payload {{args}}
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports payload {{ args }}
 
 export-emit args:
-    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports emit {{args}}
+    @binary="$(mktemp)"; trap 'rm -f "$binary"' EXIT; (cd tooling && go build -o "$binary" ./cmd/infractl); "$binary" exports emit {{ args }}

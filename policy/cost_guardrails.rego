@@ -75,20 +75,23 @@ deny contains message if {
 resource_labels(resource_type, after) := object.get(first(object.get(after, "settings", [])), "user_labels", {}) if {
 	resource_type == "google_sql_database_instance"
 }
+
 resource_labels(resource_type, after) := object.get(after, "resource_labels", {}) if {
 	resource_type == "google_container_cluster"
 }
+
 resource_labels(resource_type, after) := object.get(first(object.get(after, "node_config", [])), "resource_labels", {}) if {
 	resource_type == "google_container_node_pool"
 }
+
 resource_labels(resource_type, after) := object.get(after, "labels", {}) if {
 	resource_type != "google_sql_database_instance"
 	resource_type != "google_container_cluster"
 	resource_type != "google_container_node_pool"
 }
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 mutates(actions) if {
 	some action in actions

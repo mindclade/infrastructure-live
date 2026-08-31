@@ -6,8 +6,8 @@
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "environments"],
   "properties": {
-    "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
-    "kind": {"const": "EnvironmentCatalog"},
+    "apiVersion": { "const": "infrastructure.mindclade.dev/v1" },
+    "kind": { "const": "EnvironmentCatalog" },
     "environments": {
       "type": "array",
       "minItems": 4,
@@ -15,18 +15,40 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "enabled", "productionLike", "regionProfile", "projectClass", "dataClasses", "resourceProfile", "acceleratorProfiles", "approvalMode", "gitopsPromotionMode"],
+        "required": [
+          "name",
+          "enabled",
+          "productionLike",
+          "regionProfile",
+          "projectClass",
+          "dataClasses",
+          "resourceProfile",
+          "acceleratorProfiles",
+          "approvalMode",
+          "gitopsPromotionMode"
+        ],
         "properties": {
-          "name": {"enum": ["development", "staging", "production", "restricted"]},
-          "enabled": {"type": "boolean"},
-          "productionLike": {"type": "boolean"},
-          "regionProfile": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
-          "projectClass": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
-          "dataClasses": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["public", "internal", "confidential", "restricted"]}},
-          "resourceProfile": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
-          "acceleratorProfiles": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"}},
-          "approvalMode": {"enum": ["pull-request", "protected-environment", "protected-environment-two-person"]},
-          "gitopsPromotionMode": {"enum": ["automatic-after-evidence", "manual"]}
+          "name": { "enum": ["development", "staging", "production", "restricted"] },
+          "enabled": { "type": "boolean" },
+          "productionLike": { "type": "boolean" },
+          "regionProfile": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" },
+          "projectClass": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" },
+          "dataClasses": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["public", "internal", "confidential", "restricted"] }
+          },
+          "resourceProfile": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" },
+          "acceleratorProfiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" }
+          },
+          "approvalMode": {
+            "enum": ["pull-request", "protected-environment", "protected-environment-two-person"]
+          },
+          "gitopsPromotionMode": { "enum": ["automatic-after-evidence", "manual"] }
         }
       }
     }

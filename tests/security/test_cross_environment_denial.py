@@ -1,8 +1,8 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
-from pathlib import Path
 import re
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ENVIRONMENTS = ("development", "staging", "production", "restricted")
@@ -16,7 +16,7 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
             self.assertEqual(document["environment"], environment)
             backend = variables.with_name("backend.tf").read_text(encoding="utf-8")
             self.assertRegex(backend, r'backend\s+"gcs"\s*\{\s*\}')
-            self.assertNotRegex(backend, r'\b(bucket|prefix)\s*=')
+            self.assertNotRegex(backend, r"\b(bucket|prefix)\s*=")
 
     def test_roots_do_not_reference_another_environment(self):
         for root in sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir()):
@@ -31,7 +31,9 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertEqual(len(roots), 28)
         for root in roots:
             source = (root / "main.tf").read_text(encoding="utf-8")
-            self.assertEqual(len(re.findall(r"\benvironment\s*=\s*var\.environment\b", source)), 1, str(root))
+            self.assertEqual(
+                len(re.findall(r"\benvironment\s*=\s*var\.environment\b", source)), 1, str(root)
+            )
 
     def test_targeted_module_activation_is_bound_directly_to_catalog_authority(self):
         roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
@@ -48,13 +50,18 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         for root in roots:
             source = (root / "outputs.tf").read_text(encoding="utf-8")
             self.assertIn("var.enabled == one([", source, str(root))
-            self.assertIn('environment.enabled if environment.name == var.environment', source, str(root))
-            self.assertIn('../../../../catalog/environments.yaml', source, str(root))
+            self.assertIn(
+                "environment.enabled if environment.name == var.environment", source, str(root)
+            )
+            self.assertIn("../../../../catalog/environments.yaml", source, str(root))
 
     def test_live_roots_resolve_project_and_resource_authority_from_catalog(self):
         expected = {
             "foundation": ("project-classes.yaml", "project_class     = local.project_class"),
-            "data-services": ("resource-profiles.yaml", "resource_profile  = local.resource_profile"),
+            "data-services": (
+                "resource-profiles.yaml",
+                "resource_profile  = local.resource_profile",
+            ),
             "clusters": ("resource-profiles.yaml", "resource_profile     = local.resource_profile"),
         }
         for stack, markers in expected.items():
@@ -67,14 +74,20 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
 
     def test_catalog_profile_controls_are_provider_enforced(self):
         sql = (ROOT / "opentofu/modules/gcp/cloud-sql-postgres/main.tf").read_text(encoding="utf-8")
-        gke = (ROOT / "opentofu/modules/gcp/gke-regional-cluster/main.tf").read_text(encoding="utf-8")
-        project = (ROOT / "opentofu/modules/gcp/project-factory/main.tf").read_text(encoding="utf-8")
+        gke = (ROOT / "opentofu/modules/gcp/gke-regional-cluster/main.tf").read_text(
+            encoding="utf-8"
+        )
+        project = (ROOT / "opentofu/modules/gcp/project-factory/main.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("var.backup_retention_days >= var.minimum_backup_retention_days", sql)
         self.assertIn('var.availability_type == "REGIONAL"', sql)
         self.assertIn("length(var.node_locations) >= var.minimum_zones", gke)
         self.assertIn("deletion_protection         = var.deletion_protection_required", gke)
         self.assertIn("var.folder_id != null && var.organization_id == null", project)
-        self.assertIn('deletion_policy     = var.deletion_protection_required ? "PREVENT" : "DELETE"', project)
+        self.assertIn(
+            'deletion_policy     = var.deletion_protection_required ? "PREVENT" : "DELETE"', project
+        )
         self.assertIn("var.services == var.approved_services", project)
         for root in sorted((ROOT / "opentofu/live").glob("*/foundation/main.tf")):
             source = root.read_text(encoding="utf-8")
@@ -101,8 +114,18 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("EXPECTED_RESOURCE_REFERENCES_DIGEST", workflow)
         self.assertIn("iamPrincipalsDigest", workflow)
         self.assertIn("resourceReferencesDigest", workflow)
-        self.assertIn("unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply", workflow)
-        for stack in ("FOUNDATION", "NETWORK", "ARTIFACTS", "DATA_SERVICES", "CLUSTERS", "CI_EXECUTION", "OBSERVABILITY"):
+        self.assertIn(
+            "unset TF_CLI_ARGS TF_CLI_ARGS_init TF_CLI_ARGS_plan TF_CLI_ARGS_apply", workflow
+        )
+        for stack in (
+            "FOUNDATION",
+            "NETWORK",
+            "ARTIFACTS",
+            "DATA_SERVICES",
+            "CLUSTERS",
+            "CI_EXECUTION",
+            "OBSERVABILITY",
+        ):
             self.assertIn(f"INFRASTRUCTURE_REQUIRED_APIS_{stack}_READY", workflow)
         self.assertIn('case "${STACK}" in', workflow)
 
@@ -121,9 +144,13 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertEqual(len(roots), 28)
         for root in roots:
             source = (root / "main.tf").read_text(encoding="utf-8")
-            contract = json.loads((root / "environment.auto.tfvars.json").read_text(encoding="utf-8"))
+            contract = json.loads(
+                (root / "environment.auto.tfvars.json").read_text(encoding="utf-8")
+            )
             self.assertIn('variable "approved_iam_principals"', source, str(root))
-            self.assertIn("Environment-scoped externally qualified IAM principals", source, str(root))
+            self.assertIn(
+                "Environment-scoped externally qualified IAM principals", source, str(root)
+            )
             self.assertEqual(contract["approved_iam_principals"], [], str(root))
             self.assertIn('variable "approved_resource_references"', source, str(root))
             self.assertEqual(contract["approved_resource_references"], [], str(root))
@@ -154,7 +181,14 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("approved_resource_references", policy)
 
     def test_location_bearing_roots_bind_catalog_region_authority(self):
-        location_stacks = {"network", "artifacts", "data-services", "clusters", "ci-execution", "observability"}
+        location_stacks = {
+            "network",
+            "artifacts",
+            "data-services",
+            "clusters",
+            "ci-execution",
+            "observability",
+        }
         for stack in location_stacks:
             roots = sorted((ROOT / "opentofu/live").glob(f"*/{stack}"))
             self.assertEqual(len(roots), 4)
@@ -172,8 +206,14 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         stack_markers = {
             "network": ["region = var.primary_location"],
             "artifacts": ["location     = var.primary_location"],
-            "data-services": ["location      = var.primary_location", "region                         = var.primary_location"],
-            "clusters": ["region                        = var.primary_location", "location        = var.primary_location"],
+            "data-services": [
+                "location      = var.primary_location",
+                "region                         = var.primary_location",
+            ],
+            "clusters": [
+                "region                        = var.primary_location",
+                "location        = var.primary_location",
+            ],
             "ci-execution": ["region                                = var.primary_location"],
             "observability": ["location       = var.primary_location"],
         }
@@ -183,29 +223,44 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
                 self.assertIn(marker, source)
 
     def test_enabled_cmek_requires_explicit_qualified_service_agents(self):
-        delegated = (ROOT / "opentofu/modules/gcp/delegated-kms/variables.tf").read_text(encoding="utf-8")
+        delegated = (ROOT / "opentofu/modules/gcp/delegated-kms/variables.tf").read_text(
+            encoding="utf-8"
+        )
         observability = (ROOT / "opentofu/stacks/observability/main.tf").read_text(encoding="utf-8")
         self.assertIn("length(key.encrypter_decrypters) > 0", delegated)
         self.assertIn("serviceAccount:", delegated)
         self.assertIn("encrypter_decrypters", observability)
-        for contract in sorted((ROOT / "opentofu/live").glob("*/observability/environment.auto.tfvars.json")):
+        for contract in sorted(
+            (ROOT / "opentofu/live").glob("*/observability/environment.auto.tfvars.json")
+        ):
             config = json.loads(contract.read_text(encoding="utf-8"))["config"]
             self.assertEqual(config["key_encrypter_decrypters"], [])
 
     def test_observability_sink_iam_uses_reviewed_two_phase_identity_flow(self):
-        source = (ROOT / "opentofu/modules/gcp/observability-backend/main.tf").read_text(encoding="utf-8")
-        variables = (ROOT / "opentofu/modules/gcp/observability-backend/variables.tf").read_text(encoding="utf-8")
+        source = (ROOT / "opentofu/modules/gcp/observability-backend/main.tf").read_text(
+            encoding="utf-8"
+        )
+        variables = (ROOT / "opentofu/modules/gcp/observability-backend/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('var.sink_writer_binding_mode == "enforce"', source)
         self.assertIn('data "google_logging_sink" "discovered_source"', source)
         self.assertIn('id = "projects/${each.key}/sinks/${local.sink_name}"', source)
         self.assertIn("member  = each.value", source)
-        self.assertIn("each.value == data.google_logging_sink.discovered_source[each.key].writer_identity", source)
-        self.assertIn("each.value == google_logging_project_sink.source[each.key].writer_identity", source)
+        self.assertIn(
+            "each.value == data.google_logging_sink.discovered_source[each.key].writer_identity",
+            source,
+        )
+        self.assertIn(
+            "each.value == google_logging_project_sink.source[each.key].writer_identity", source
+        )
         self.assertNotIn("member  = each.value.writer_identity", source)
         self.assertIn('contains(["discover", "enforce"]', variables)
         self.assertIn("toset(keys(var.sink_writer_identities)) == var.source_projects", variables)
         self.assertIn("!contains(var.source_projects, var.project_id)", variables)
-        for contract in sorted((ROOT / "opentofu/live").glob("*/observability/environment.auto.tfvars.json")):
+        for contract in sorted(
+            (ROOT / "opentofu/live").glob("*/observability/environment.auto.tfvars.json")
+        ):
             config = json.loads(contract.read_text(encoding="utf-8"))["config"]
             self.assertEqual(config["sink_writer_binding_mode"], "enforce")
             self.assertEqual(config["sink_writer_identities"], {})
@@ -242,23 +297,35 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
                 self.assertIn(binding, source, f"{stack} does not bind {binding}")
 
     def test_secret_access_identity_is_external_secrets_only(self):
-        variables = (ROOT / "opentofu/modules/gcp/argocd-management/variables.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/argocd-management/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('default = ["external-secrets"]', variables)
         self.assertIn('account == "external-secrets"', variables)
         self.assertNotIn("argocd-server", variables)
         self.assertNotIn("argocd-application-controller", variables)
 
     def test_workload_project_roles_use_an_explicit_capability_allowlist(self):
-        variables = (ROOT / "opentofu/modules/gcp/workload-identity/variables.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/workload-identity/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('"roles/cloudsql.client"', variables)
         self.assertIn('"roles/logging.logWriter"', variables)
         self.assertIn("explicit least-privilege capability allowlist", variables)
-        for forbidden in ("roles/cloudkms.admin", "roles/resourcemanager.projectIamAdmin", "roles/iam.securityAdmin"):
+        for forbidden in (
+            "roles/cloudkms.admin",
+            "roles/resourcemanager.projectIamAdmin",
+            "roles/iam.securityAdmin",
+        ):
             self.assertNotIn(f'"{forbidden}"', variables)
 
     def test_egress_is_allowlisted_and_default_denied(self):
-        source = (ROOT / "opentofu/modules/gcp/controlled-egress/main.tf").read_text(encoding="utf-8")
-        variables = (ROOT / "opentofu/modules/gcp/controlled-egress/variables.tf").read_text(encoding="utf-8")
+        source = (ROOT / "opentofu/modules/gcp/controlled-egress/main.tf").read_text(
+            encoding="utf-8"
+        )
+        variables = (ROOT / "opentofu/modules/gcp/controlled-egress/variables.tf").read_text(
+            encoding="utf-8"
+        )
         policy = (ROOT / "policy/network_boundaries.rego").read_text(encoding="utf-8")
         self.assertIn('resource "google_compute_firewall" "allow_egress"', source)
         self.assertIn('resource "google_compute_firewall" "deny_egress"', source)
@@ -278,25 +345,36 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("count(target_tags) > 0", policy)
         stack = (ROOT / "opentofu/stacks/network/main.tf").read_text(encoding="utf-8")
         self.assertIn("allowed_egress_rules = var.config.allowed_egress_rules", stack)
-        for contract in sorted((ROOT / "opentofu/live").glob("*/network/environment.auto.tfvars.json")):
+        for contract in sorted(
+            (ROOT / "opentofu/live").glob("*/network/environment.auto.tfvars.json")
+        ):
             config = json.loads(contract.read_text(encoding="utf-8"))["config"]
             self.assertEqual(config["allowed_egress_rules"], {})
 
     def test_shared_vpc_requires_distinct_service_projects(self):
         source = (ROOT / "opentofu/modules/gcp/shared-vpc/main.tf").read_text(encoding="utf-8")
-        variables = (ROOT / "opentofu/modules/gcp/shared-vpc/variables.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/shared-vpc/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('resource "google_compute_shared_vpc_service_project" "this"', source)
         self.assertIn("each.value != var.project_id", source)
         self.assertIn("length(var.service_project_ids) > 0", variables)
-        for contract in sorted((ROOT / "opentofu/live").glob("*/network/environment.auto.tfvars.json")):
+        for contract in sorted(
+            (ROOT / "opentofu/live").glob("*/network/environment.auto.tfvars.json")
+        ):
             config = json.loads(contract.read_text(encoding="utf-8"))["config"]
             self.assertEqual(config["service_project_ids"], [])
 
     def test_network_cidrs_reject_host_form_and_noncanonical_control_plane_ranges(self):
         shared = (ROOT / "opentofu/modules/gcp/shared-vpc/variables.tf").read_text(encoding="utf-8")
-        gke = (ROOT / "opentofu/modules/gcp/gke-regional-cluster/variables.tf").read_text(encoding="utf-8")
+        gke = (ROOT / "opentofu/modules/gcp/gke-regional-cluster/variables.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("can(cidrnetmask", shared)
-        self.assertIn('cidrhost("${var.private_service_access.address}/${var.private_service_access.prefix_length}", 0)', shared)
+        self.assertIn(
+            'cidrhost("${var.private_service_access.address}/${var.private_service_access.prefix_length}", 0)',
+            shared,
+        )
         self.assertIn("== var.private_service_access.address", shared)
         self.assertIn("Primary and secondary subnet ranges must be canonical IPv4 CIDRs.", shared)
         self.assertIn("cidrcontains(cidr, other_cidr)", shared)
@@ -308,8 +386,12 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("cidrhost(var.master_ipv4_cidr_block, 0)", gke)
 
     def test_buildkite_images_are_immutable_when_enabled(self):
-        variables = (ROOT / "opentofu/modules/gcp/buildkite-agents/variables.tf").read_text(encoding="utf-8")
-        source = (ROOT / "opentofu/modules/gcp/buildkite-agents/main.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/buildkite-agents/variables.tf").read_text(
+            encoding="utf-8"
+        )
+        source = (ROOT / "opentofu/modules/gcp/buildkite-agents/main.tf").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("global/images/[a-z]", variables)
         self.assertIn("@sha256:[0-9a-f]{64}$", variables)
         self.assertIn("startup-script", source)
@@ -344,7 +426,9 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("require_target_scope = true", stack)
         self.assertIn("allow_priority       = 900", stack)
         self.assertIn("deny_priority        = 1000", stack)
-        for contract in sorted((ROOT / "opentofu/live").glob("*/ci-execution/environment.auto.tfvars.json")):
+        for contract in sorted(
+            (ROOT / "opentofu/live").glob("*/ci-execution/environment.auto.tfvars.json")
+        ):
             config = json.loads(contract.read_text(encoding="utf-8"))["config"]
             self.assertGreaterEqual(config["min_replicas"], 1)
             self.assertIs(config["agent_image_secret_contract_verified"], False)
@@ -353,7 +437,9 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
             self.assertIsNone(config["network_project_id"])
             self.assertIsNone(config["network_id"])
             self.assertEqual(config["allowed_egress_rules"], {})
-            self.assertTrue(all(endpoint is None for endpoint in config["dependency_mirror_endpoints"].values()))
+            self.assertTrue(
+                all(endpoint is None for endpoint in config["dependency_mirror_endpoints"].values())
+            )
             self.assertIsNone(config["token_secret_version"])
         workflow = (ROOT / ".github/workflows/protected-apply.yml").read_text(encoding="utf-8")
         self.assertIn("INFRASTRUCTURE_BUILDKITE_IMAGE_CONTRACT_READY", workflow)
@@ -363,17 +449,33 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("INFRASTRUCTURE_BUILDKITE_EGRESS_ALLOWLIST_READY", workflow)
 
     def test_generated_service_account_iam_members_are_plan_known(self):
-        buildkite = (ROOT / "opentofu/modules/gcp/buildkite-agents/main.tf").read_text(encoding="utf-8")
-        workload = (ROOT / "opentofu/modules/gcp/workload-identity/main.tf").read_text(encoding="utf-8")
-        argocd = (ROOT / "opentofu/modules/gcp/argocd-management/main.tf").read_text(encoding="utf-8")
-        self.assertIn('serviceAccount:${var.name}@${var.project_id}.iam.gserviceaccount.com', buildkite)
-        self.assertIn('serviceAccount:${each.value.account_id}@${var.project_id}.iam.gserviceaccount.com', workload)
-        self.assertIn('serviceAccount:${var.service_account_id}@${var.project_id}.iam.gserviceaccount.com', argocd)
+        buildkite = (ROOT / "opentofu/modules/gcp/buildkite-agents/main.tf").read_text(
+            encoding="utf-8"
+        )
+        workload = (ROOT / "opentofu/modules/gcp/workload-identity/main.tf").read_text(
+            encoding="utf-8"
+        )
+        argocd = (ROOT / "opentofu/modules/gcp/argocd-management/main.tf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "serviceAccount:${var.name}@${var.project_id}.iam.gserviceaccount.com", buildkite
+        )
+        self.assertIn(
+            "serviceAccount:${each.value.account_id}@${var.project_id}.iam.gserviceaccount.com",
+            workload,
+        )
+        self.assertIn(
+            "serviceAccount:${var.service_account_id}@${var.project_id}.iam.gserviceaccount.com",
+            argocd,
+        )
         self.assertNotIn("google_service_account.agent[0].email", buildkite)
         self.assertNotIn("google_service_account.controller[0].email", argocd)
 
     def test_no_static_credentials_or_kubernetes_provider(self):
-        forbidden = re.compile(r'(?i)(google_service_account_key|private_key_data|client_secret\s*=|provider\s+"kubernetes"|provider\s+"helm")')
+        forbidden = re.compile(
+            r'(?i)(google_service_account_key|private_key_data|client_secret\s*=|provider\s+"kubernetes"|provider\s+"helm")'
+        )
         for path in sorted((ROOT / "opentofu").rglob("*.tf")):
             self.assertIsNone(forbidden.search(path.read_text(encoding="utf-8")), str(path))
 

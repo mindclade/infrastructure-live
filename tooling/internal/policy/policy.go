@@ -3,6 +3,7 @@ package policy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -26,7 +27,10 @@ func Verify(root string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("conftest is required for policy verification: %w", err)
 	}
-	command := exec.Command(binary, "verify", "--policy", policyRoot, "--output", "json")
+	// #nosec G204 -- binary is the configured policy verifier and arguments are not shell-expanded.
+	command := exec.CommandContext(
+		context.Background(), binary, "verify", "--policy", policyRoot, "--output", "json",
+	)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr

@@ -106,6 +106,7 @@ test_accepts_incomplete_default_route_fragments if {
 	}
 	count(violations) == 0
 }
+
 test_rejects_any_protocol_egress_allow if {
 	violations := deny with input as {
 		"resource_changes": [{

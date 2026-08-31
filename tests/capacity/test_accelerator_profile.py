@@ -1,7 +1,7 @@
-from pathlib import Path
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import re
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -37,16 +37,23 @@ class AcceleratorProfileContractTest(unittest.TestCase):
             self.assertIn("yamldecode(file", source)
             self.assertIn("environments.yaml", source)
             self.assertIn("accelerator-profiles.yaml", source)
-            self.assertIn("contains(local.environment_catalog.acceleratorProfiles, profile.name)", source)
+            self.assertIn(
+                "contains(local.environment_catalog.acceleratorProfiles, profile.name)", source
+            )
             self.assertIn("accelerator_profiles = local.accelerator_profiles", source)
 
     def test_development_cannot_select_the_production_profile(self):
         source = (ROOT / "opentofu/live/development/clusters/main.tf").read_text(encoding="utf-8")
         environment_catalog = (ROOT / "catalog/environments.yaml").read_text(encoding="utf-8")
-        development = environment_catalog.split("- name: development", 1)[1].split("- name: staging", 1)[0]
+        development = environment_catalog.split("- name: development", 1)[1].split(
+            "- name: staging", 1
+        )[0]
         self.assertIn("acceleratorProfiles: [gpu-development]", development)
         self.assertNotIn("gpu-production", development)
-        self.assertIn("profile.name => profile if contains(local.environment_catalog.acceleratorProfiles, profile.name)", source)
+        self.assertIn(
+            "profile.name => profile if contains(local.environment_catalog.acceleratorProfiles, profile.name)",
+            source,
+        )
 
     def test_mutable_latest_driver_is_not_a_default(self):
         sources = [

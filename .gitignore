@@ -9,10 +9,13 @@
 *.auto.tfvars
 !environment.auto.tfvars.json
 crash.log
-MODULE.bazel.lock
 bazel-*
+/result
+/result-*
 tooling/infractl
 *.evidence.json
 *.export.json
 __pycache__/
 *.py[cod]
+!.vscode/
+!.vscode/*.json

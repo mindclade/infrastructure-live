@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -151,13 +152,13 @@ func Reconcile(desiredData, observedData []byte) (ReconciliationReport, error) {
 	}
 	if desired.Root != observed.Root || desired.SourceCommit != observed.SourceCommit ||
 		desired.PlanDigest != observed.PlanDigest || desired.OperationID != observed.OperationID {
-		return ReconciliationReport{}, fmt.Errorf("observed reconciliation transaction identity does not match the reviewed plan")
+		return ReconciliationReport{}, errors.New("observed reconciliation transaction identity does not match the reviewed plan")
 	}
 	if desired.Backend.Lineage != observed.Backend.Lineage {
-		return ReconciliationReport{}, fmt.Errorf("backend lineage changed; manual recovery review is required")
+		return ReconciliationReport{}, errors.New("backend lineage changed; manual recovery review is required")
 	}
 	if observed.Backend.Serial < desired.Backend.Serial || observed.Backend.Serial > desired.Backend.Serial+1 {
-		return ReconciliationReport{}, fmt.Errorf("backend serial advanced outside the single interrupted apply boundary")
+		return ReconciliationReport{}, errors.New("backend serial advanced outside the single interrupted apply boundary")
 	}
 
 	findings := []Finding{}
@@ -206,22 +207,22 @@ func Reconcile(desiredData, observedData []byte) (ReconciliationReport, error) {
 
 func validateReconciliationDocument(document ReconciliationDocument) (map[string]ReconciliationResource, error) {
 	if document.APIVersion != ReconciliationAPIVersion || document.Kind != "PartialApplyReconciliation" {
-		return nil, fmt.Errorf("invalid reconciliation type metadata")
+		return nil, errors.New("invalid reconciliation type metadata")
 	}
 	if !reconciliationRootPattern.MatchString(document.Root) || !reconciliationCommitPattern.MatchString(document.SourceCommit) ||
 		!reconciliationDigestPattern.MatchString(document.PlanDigest) || !reconciliationOperationPattern.MatchString(document.OperationID) ||
 		!reconciliationLineagePattern.MatchString(document.Backend.Lineage) {
-		return nil, fmt.Errorf("root, source commit, plan digest, operation, and backend lineage must be canonical")
+		return nil, errors.New("root, source commit, plan digest, operation, and backend lineage must be canonical")
 	}
 	if len(document.Resources) == 0 {
-		return nil, fmt.Errorf("at least one provider resource observation is required")
+		return nil, errors.New("at least one provider resource observation is required")
 	}
 	resources := make(map[string]ReconciliationResource, len(document.Resources))
 	for _, resource := range document.Resources {
 		if !reconciliationAddressPattern.MatchString(resource.Address) ||
 			len(resource.ProviderID) == 0 || len(resource.ProviderID) > 2048 || strings.TrimSpace(resource.ProviderID) != resource.ProviderID ||
 			strings.ContainsAny(resource.ProviderID, "\r\n\t") || !reconciliationDigestPattern.MatchString(resource.StateDigest) {
-			return nil, fmt.Errorf("resource address, provider ID, and redacted state digest must be canonical")
+			return nil, errors.New("resource address, provider ID, and redacted state digest must be canonical")
 		}
 		if _, exists := resources[resource.Address]; exists {
 			return nil, fmt.Errorf("duplicate resource address %q", resource.Address)
@@ -240,7 +241,7 @@ func decodeStrictJSON(data []byte, destination any) error {
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("unexpected trailing JSON value")
+			return errors.New("unexpected trailing JSON value")
 		}
 		return err
 	}
@@ -257,7 +258,7 @@ func decodeJSON(data []byte) (any, error) {
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return nil, fmt.Errorf("unexpected trailing JSON value")
+			return nil, errors.New("unexpected trailing JSON value")
 		}
 		return nil, err
 	}

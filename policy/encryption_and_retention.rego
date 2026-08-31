@@ -241,6 +241,7 @@ valid_ci_evidence_archive_key(after) if {
 data_labels(resource_type, after) := object.get(first(object.get(after, "settings", [])), "user_labels", {}) if {
 	resource_type == "google_sql_database_instance"
 }
+
 data_labels(resource_type, after) := object.get(after, "labels", {}) if {
 	resource_type != "google_sql_database_instance"
 }
@@ -249,17 +250,17 @@ valid_data_class(classification) if {
 	classification in {"public", "internal", "confidential", "restricted"}
 }
 
-environment_allows("development", classification) if { classification in {"public", "internal"} }
-environment_allows("staging", classification) if { classification in {"public", "internal", "confidential"} }
-environment_allows("production", classification) if { classification in {"public", "internal", "confidential"} }
+environment_allows("development", classification) if classification in {"public", "internal"}
+environment_allows("staging", classification) if classification in {"public", "internal", "confidential"}
+environment_allows("production", classification) if classification in {"public", "internal", "confidential"}
 environment_allows("restricted", "restricted")
 
 root_environment := object.get(object.get(object.get(input, "variables", {}), "environment", {}), "value", "")
 
 root_ci_evidence_archive := object.get(object.get(object.get(object.get(object.get(input, "planned_values", {}), "outputs", {}), "region_authority", {}), "value", {}), "ci_evidence_archive", {})
 
-first(values) := values[0] if { count(values) > 0 }
-first(values) := {} if { count(values) == 0 }
+first(values) := values[0] if count(values) > 0
+first(values) := {} if count(values) == 0
 
 mutates(actions) if {
 	some action in actions
