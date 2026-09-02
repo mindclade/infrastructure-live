@@ -206,6 +206,15 @@ def signed_export(
 
 
 class EnvironmentPlanContractTest(unittest.TestCase):
+    def test_bazel_dependabot_stages_nested_go_module(self):
+        module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
+        for required in (
+            'go_mod_from_file = "//tooling:go.mod"',
+            'go_sum_from_file = "//tooling:go.sum"',
+            "go_deps.from_file(go_mod = go_mod_from_file)",
+        ):
+            self.assertIn(required, module)
+
     def test_checked_out_blueprint_tree_is_exact_and_nonempty(self):
         if not (ROOT / ".git").exists():
             self.skipTest("Bazel runfiles intentionally expose only declared test data")
@@ -446,7 +455,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertNotIn("id-token: write", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertIn(
-            "mindclade/.github/.github/workflows/reusable-nix-validation.yml@c097ef86c25991a400050c13e78574e8d3d8c071",
+            "mindclade/.github/.github/workflows/reusable-nix-validation.yml@f9b6ebcecd197157d9466eeacf8e2864e32c9a79",
             workflow,
         )
         self.assertIn("VALIDATE_RESULT: ${{ needs.validate.result }}", workflow)
