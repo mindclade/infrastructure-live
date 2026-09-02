@@ -14,6 +14,7 @@
     let
       systems = [
         "aarch64-darwin"
+        "aarch64-linux"
         "x86_64-linux"
       ];
       forAllSystems =
@@ -35,6 +36,10 @@
                 asset = "biome-darwin-arm64";
                 hash = "sha256-UA/Ij/QJJe1CKtzKa4o+kFJu6QTSuhCw7eDNBl/KPSs=";
               };
+              aarch64-linux = {
+                asset = "biome-linux-arm64";
+                hash = "sha256-A2zksK2rrASMHl8oU50E/f8LD4FHFlckT5z898hSVXg=";
+              };
               x86_64-linux = {
                 asset = "biome-linux-x64";
                 hash = "sha256-klh/rBAuM8v4qx/bSIT49Ny/ERcln8bezVy1tfXkjmc=";
@@ -54,6 +59,10 @@
               aarch64-darwin = {
                 asset = "Darwin_arm64";
                 hash = "sha256-eDAtBF8OxS6XhqBsbGIaxFFrTF3R5U78gFDIbCm5ZNk=";
+              };
+              aarch64-linux = {
+                asset = "Linux_arm64";
+                hash = "sha256-O5w1Ij/jX5mI4VPN/7AUT5ESATBsdGdYtzvoKDHFQ9k=";
               };
               x86_64-linux = {
                 asset = "Linux_x86_64";
@@ -86,6 +95,10 @@
                 asset = "opa_darwin_arm64";
                 hash = "sha256-K4BdR2CZ+Bgo4KckZvI7fF9wNejlGCP14e88v08jIc4=";
               };
+              aarch64-linux = {
+                asset = "opa_linux_arm64";
+                hash = "sha256-B6Nqg3b7oaekT3A9TrMUw20vmutt9di9slcGP9/NW14=";
+              };
               x86_64-linux = {
                 asset = "opa_linux_amd64";
                 hash = "sha256-SBTKr4kGK5kp5zc8dF6xtzvoqjR75h2gZJH2j+kQJFs=";
@@ -105,6 +118,10 @@
               aarch64-darwin = {
                 asset = "darwin_arm64";
                 hash = "sha256-4IPuQ3kKueGa1m2ZM+JKckShQS4dVyjzeZmuIWP9rJU=";
+              };
+              aarch64-linux = {
+                asset = "linux_arm64";
+                hash = "sha256-5XOXm6aKF/57iBdSBRppSn782XDjlSH2old1GXhh7U0=";
               };
               x86_64-linux = {
                 asset = "linux_amd64";
@@ -180,6 +197,21 @@
               exec ${pkgs.bazel_9}/bin/bazel "''${startup_flags[@]}" "$@"
             '';
           };
+          cachePolicyBundle = pkgs.runCommand "mindclade-cache-boundary-v2-policy" { } ''
+            install -D -m 0444 ${self}/policy/encryption_and_retention.rego \
+              "$out/share/mindclade/policy/cache-boundary.v2.rego"
+            cat >"$out/share/mindclade/policy/generated-copy.json" <<'EOF'
+            ${builtins.toJSON {
+              schema_version = "mindclade-policy-copy.v1";
+              mode = "generated-copy";
+              canonical_repository = "mindclade/infrastructure-live";
+              source_path = "policy/encryption_and_retention.rego";
+              source_sha256 = builtins.hashFile "sha256" "${self}/policy/encryption_and_retention.rego";
+              consumers = [ "estate-ci" ];
+            }}
+            EOF
+            chmod 0444 "$out/share/mindclade/policy/generated-copy.json"
+          '';
           moduleLock = "${self}/MODULE.bazel.lock";
           toolchainManifest = pkgs.writeTextDir "share/mindclade/toolchain-manifest.json" (
             builtins.toJSON {
@@ -202,6 +234,13 @@
                 store_path = "${pkgs.jdk21_headless}";
               };
               native_cc_store_path = "${pkgs.stdenv.cc}";
+              shared_policy = {
+                schema_version = "mindclade-policy-copy.v1";
+                mode = "generated-copy";
+                canonical_repository = "mindclade/infrastructure-live";
+                source_path = "policy/encryption_and_retention.rego";
+                source_sha256 = builtins.hashFile "sha256" "${self}/policy/encryption_and_retention.rego";
+              };
             }
           );
           toolchainPackages =
@@ -212,6 +251,7 @@
               bazel
               biome
               buildifier
+              cachePolicyBundle
               cacert
               conftest
               coreutils
@@ -262,7 +302,7 @@
           };
         in
         {
-          inherit toolchain;
+          inherit cachePolicyBundle toolchain;
           "toolchain-manifest" = toolchainManifest;
           default = toolchain;
         }

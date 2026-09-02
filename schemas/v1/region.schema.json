@@ -17,6 +17,7 @@
         "required": [
           "name",
           "enabled",
+          "sourceReady",
           "primaryLocation",
           "recoveryLocation",
           "residency",
@@ -26,6 +27,7 @@
         "properties": {
           "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$" },
           "enabled": { "type": "boolean" },
+          "sourceReady": { "type": "boolean" },
           "primaryLocation": { "type": ["string", "null"], "pattern": "^[a-z]+-[a-z]+[0-9]$" },
           "recoveryLocation": { "type": ["string", "null"], "pattern": "^[a-z]+-[a-z]+[0-9]$" },
           "residency": { "enum": ["us"] },
@@ -34,7 +36,10 @@
         },
         "allOf": [
           {
-            "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+            "if": {
+              "properties": { "sourceReady": { "const": true } },
+              "required": ["sourceReady"]
+            },
             "then": { "properties": { "primaryLocation": { "type": "string" } } },
             "else": {
               "properties": {

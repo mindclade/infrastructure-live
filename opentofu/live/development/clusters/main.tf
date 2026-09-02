@@ -10,6 +10,42 @@ variable "enabled" {
   type    = bool
   default = false
 }
+variable "argocd_inputs" {
+  description = "Protected Argo CD management handoff; secret references are resource names, never secret values."
+  type = object({
+    connected                   = bool
+    service_account_id          = string
+    kubernetes_namespace        = string
+    kubernetes_service_accounts = set(string)
+    membership_id               = optional(string)
+    secret_references           = set(string)
+    qualification_digest        = optional(string)
+  })
+
+  validation {
+    condition = (
+      var.argocd_inputs.service_account_id == "argocd-management" &&
+      var.argocd_inputs.kubernetes_namespace == "external-secrets" &&
+      var.argocd_inputs.kubernetes_service_accounts == toset(["external-secrets"]) &&
+      (
+        (
+          !var.argocd_inputs.connected &&
+          var.argocd_inputs.membership_id == null &&
+          length(var.argocd_inputs.secret_references) == 0 &&
+          var.argocd_inputs.qualification_digest == null
+        ) ||
+        (
+          var.argocd_inputs.connected &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/memberships/[a-z][a-z0-9-]+$", var.argocd_inputs.membership_id)) &&
+          length(var.argocd_inputs.secret_references) > 0 &&
+          alltrue([for reference in var.argocd_inputs.secret_references : can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/secrets/[a-z][a-z0-9-]+/versions/[1-9][0-9]*$", reference))]) &&
+          can(regex("^sha256:[0-9a-f]{64}$", var.argocd_inputs.qualification_digest))
+        )
+      )
+    )
+    error_message = "Argo CD inputs must remain unconnected until protected membership, secret references, and qualification evidence are bound."
+  }
+}
 variable "approved_iam_principals" {
   description = "Environment-scoped externally qualified IAM principals used by policy validation."
   type        = set(string)
@@ -107,5 +143,14 @@ module "stack" {
   recovery_location    = local.region_profile.recoveryLocation
   accelerator_profiles = local.accelerator_profiles
   resource_profile     = local.resource_profile
-  config               = var.config
+  config = merge(var.config, {
+    argocd = var.argocd_inputs.connected ? {
+      enabled                     = true
+      service_account_id          = var.argocd_inputs.service_account_id
+      kubernetes_namespace        = var.argocd_inputs.kubernetes_namespace
+      kubernetes_service_accounts = var.argocd_inputs.kubernetes_service_accounts
+      secret_references           = var.argocd_inputs.secret_references
+      membership_id               = var.argocd_inputs.membership_id
+    } : null
+  })
 }

@@ -48,6 +48,19 @@ module "buckets" {
   writers = var.config.bucket_writers
 }
 
+module "nix_cache" {
+  source = "../../modules/gcp/nix-cache"
+
+  enabled                         = var.enabled && var.nix_cache.enabled
+  environment                     = var.environment
+  location                        = var.environment == "development" ? "us-central1" : coalesce(var.primary_location, "us-central1")
+  boundary                        = var.nix_cache.boundary
+  protected_inputs                = var.nix_cache.protected_inputs
+  gateway                         = var.nix_cache.gateway
+  quotas                          = var.nix_cache.quotas
+  legacy_v1_compatibility_enabled = var.nix_cache.legacy_v1_compatibility_enabled
+}
+
 locals {
   ci_evidence_archive_enabled       = var.enabled && try(var.ci_evidence_archive_profile.enabled, false)
   ci_evidence_identity_project      = try(var.config.ci_evidence_archive.identity_project_id, null)

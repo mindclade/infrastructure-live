@@ -38,3 +38,7 @@ output "region_authority" {
   }
 }
 output "resources" { value = module.stack }
+output "estate_ci_edge_contract" {
+  description = "Protected external managed HTTPS Gateway, certificate, Armor, IAP reference, and delegated DNS handoff."
+  value       = var.estate_ci_edge
+}

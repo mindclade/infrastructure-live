@@ -10,6 +10,52 @@ variable "enabled" {
   type    = bool
   default = false
 }
+variable "estate_ci_edge" {
+  description = "Protected external managed HTTPS Gateway and delegated DNS inputs for estate-ci.mindclade.com."
+  type = object({
+    connected                           = bool
+    hostname                            = string
+    gateway_class                       = string
+    certificate_map_id                  = optional(string)
+    certificate_ids                     = set(string)
+    cloud_armor_policy_id               = optional(string)
+    iap_oauth_client_id_secret_resource = optional(string)
+    iap_oauth_client_secret_resource    = optional(string)
+    delegated_dns_zone_id               = optional(string)
+    delegated_dns_records               = list(object({ name = string, type = string, ttl = number, rrdatas = list(string) }))
+  })
+
+  validation {
+    condition = (
+      var.estate_ci_edge.hostname == "estate-ci.mindclade.com" &&
+      var.estate_ci_edge.gateway_class == "gke-l7-global-external-managed" &&
+      (
+        (
+          !var.estate_ci_edge.connected &&
+          var.estate_ci_edge.certificate_map_id == null &&
+          length(var.estate_ci_edge.certificate_ids) == 0 &&
+          var.estate_ci_edge.cloud_armor_policy_id == null &&
+          var.estate_ci_edge.iap_oauth_client_id_secret_resource == null &&
+          var.estate_ci_edge.iap_oauth_client_secret_resource == null &&
+          var.estate_ci_edge.delegated_dns_zone_id == null &&
+          length(var.estate_ci_edge.delegated_dns_records) == 0
+        ) ||
+        (
+          var.estate_ci_edge.connected &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/global/certificateMaps/[a-z][a-z0-9-]+$", var.estate_ci_edge.certificate_map_id)) &&
+          length(var.estate_ci_edge.certificate_ids) > 0 &&
+          alltrue([for id in var.estate_ci_edge.certificate_ids : can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/global/certificates/[a-z][a-z0-9-]+$", id))]) &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/securityPolicies/[a-z][a-z0-9-]+$", var.estate_ci_edge.cloud_armor_policy_id)) &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/secrets/[a-z][a-z0-9-]+/versions/[1-9][0-9]*$", var.estate_ci_edge.iap_oauth_client_id_secret_resource)) &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/secrets/[a-z][a-z0-9-]+/versions/[1-9][0-9]*$", var.estate_ci_edge.iap_oauth_client_secret_resource)) &&
+          can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/managedZones/[a-z][a-z0-9-]+$", var.estate_ci_edge.delegated_dns_zone_id)) &&
+          length(var.estate_ci_edge.delegated_dns_records) > 0
+        )
+      )
+    )
+    error_message = "The estate CI edge must use the exact hostname and external managed Gateway class; every protected edge/DNS input stays null until connected."
+  }
+}
 variable "approved_iam_principals" {
   description = "Environment-scoped externally qualified IAM principals used by policy validation."
   type        = set(string)

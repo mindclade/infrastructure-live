@@ -1,6 +1,15 @@
 output "repository_ids" { value = module.registry.repository_ids }
 output "bucket_ids" { value = module.buckets.bucket_ids }
 output "kms_key_ids" { value = module.kms.key_ids }
+output "nix_cache" {
+  description = "Fail-closed cache-boundary.v2 and non-secret infrastructure handoff."
+  value = {
+    cache_boundary          = module.nix_cache.cache_boundary
+    infrastructure_contract = module.nix_cache.infrastructure_contract
+    bucket_ids              = module.nix_cache.bucket_ids
+    kms_key_ids             = module.nix_cache.kms_key_ids
+  }
+}
 output "ci_evidence_archive" {
   value = {
     catalog_enabled             = try(var.ci_evidence_archive_profile.enabled, false)

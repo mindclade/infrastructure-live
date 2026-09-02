@@ -38,3 +38,7 @@ output "region_authority" {
   }
 }
 output "resources" { value = module.stack }
+output "argocd_input_contract" {
+  description = "Non-secret Argo CD management inputs and qualification digest."
+  value       = var.argocd_inputs
+}

@@ -7,6 +7,41 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ArtifactRestoreContractTest(unittest.TestCase):
+    def test_nix_cache_poison_recovery_is_epoch_isolated_and_fail_closed(self):
+        runbook = (ROOT / "runbooks/nix-cache-recovery.md").read_text(encoding="utf-8")
+        module = (ROOT / "opentofu/modules/gcp/nix-cache/main.tf").read_text(encoding="utf-8")
+        contract = json.loads(
+            (ROOT / "opentofu/live/development/artifacts/environment.auto.tfvars.json").read_text(
+                encoding="utf-8"
+            )
+        )["nix_cache"]
+
+        self.assertIs(contract["enabled"], False)
+        self.assertEqual(contract["boundary"]["qualification"], "DISABLED")
+        self.assertEqual(contract["boundary"]["namespace"]["namespace_epoch"], "disabled-v2")
+        self.assertIsNone(contract["boundary"]["endpoint"])
+        self.assertIsNone(contract["boundary"]["write_activation_digest"])
+        self.assertIs(contract["boundary"]["cache_outputs_are_evidence"], False)
+        self.assertFalse(any(contract["protected_inputs"].values()))
+        for required in (
+            "cacheless canary",
+            "new namespace epoch",
+            "never repair poisoned objects in place",
+            "90-day",
+            "400-day",
+            "cache-boundary.v1",
+        ):
+            self.assertIn(required, runbook.lower())
+        for control in (
+            'role   = "roles/storage.objectCreator"',
+            'role   = "roles/storage.objectViewer"',
+            "uniform_bucket_level_access = true",
+            'public_access_prevention    = "enforced"',
+            "unique_writer_identity = true",
+            "prevent_destroy = true",
+        ):
+            self.assertIn(control, module)
+
     def test_bucket_module_preserves_recovery_controls(self):
         source = (ROOT / "opentofu/modules/gcp/artifact-bucket/main.tf").read_text(encoding="utf-8")
         for control in (

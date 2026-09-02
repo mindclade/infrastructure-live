@@ -82,6 +82,136 @@ variable "ci_evidence_archive_profile" {
     error_message = "The CI evidence archive must match the catalog-approved NAM4, CMEK, unlocked retention, recovery, and lifecycle contract; no self-asserted retention-lock receipt is accepted."
   }
 }
+
+variable "nix_cache" {
+  description = "Fail-closed development Nix cache boundary and protected activation inputs."
+  type = object({
+    enabled = bool
+    boundary = object({
+      schema_version             = string
+      qualification              = string
+      source_revision            = optional(string)
+      cache_mode                 = string
+      cache_used                 = bool
+      cache_outputs_are_evidence = bool
+      endpoint                   = optional(string)
+      namespace = object({
+        schema_version   = string
+        classification   = string
+        namespace_epoch  = string
+        trust_class      = string
+        system           = string
+        toolchain_digest = optional(string)
+        build_mode       = string
+      })
+      iam_qualification_digest = optional(string)
+      write_activation_digest  = optional(string)
+      signer_public_key_digest = optional(string)
+      audit_sink_digest        = optional(string)
+      cacheless_canary = object({
+        required         = bool
+        status           = string
+        evidence_locator = optional(string)
+        evidence_digest  = optional(string)
+      })
+      poison_recovery = object({
+        required         = bool
+        status           = string
+        runbook          = string
+        evidence_locator = optional(string)
+        evidence_digest  = optional(string)
+      })
+    })
+    protected_inputs = object({
+      project_id                         = optional(string)
+      cache_bucket_name                  = optional(string)
+      health_bucket_name                 = optional(string)
+      operation_bucket_name              = optional(string)
+      external_audit_bucket_name         = optional(string)
+      signer_secret_resource             = optional(string)
+      iam_qualification_evidence_locator = optional(string)
+      write_activation_evidence_locator  = optional(string)
+      publisher_wif_principal_sets       = set(string)
+      gateway_wif_principal_sets         = set(string)
+    })
+    gateway = object({
+      hostname        = string
+      scheme          = string
+      allowed_methods = list(string)
+      authentication  = string
+      implementation  = string
+    })
+    quotas = object({
+      publisher_writes_per_minute = number
+      gateway_reads_per_minute    = number
+      maximum_cache_bytes         = number
+    })
+    legacy_v1_compatibility_enabled = bool
+  })
+  default = {
+    enabled = false
+    boundary = {
+      schema_version             = "cache-boundary.v2"
+      qualification              = "DISABLED"
+      source_revision            = null
+      cache_mode                 = "disabled"
+      cache_used                 = false
+      cache_outputs_are_evidence = false
+      endpoint                   = null
+      namespace = {
+        schema_version   = "cache-namespace.v2"
+        classification   = "internal"
+        namespace_epoch  = "disabled-v2"
+        trust_class      = "untrusted"
+        system           = "aarch64-linux"
+        toolchain_digest = null
+        build_mode       = "cacheless"
+      }
+      iam_qualification_digest = null
+      write_activation_digest  = null
+      signer_public_key_digest = null
+      audit_sink_digest        = null
+      cacheless_canary = {
+        required         = true
+        status           = "NOT_RUN"
+        evidence_locator = null
+        evidence_digest  = null
+      }
+      poison_recovery = {
+        required         = true
+        status           = "NOT_RUN"
+        runbook          = "runbooks/nix-cache-recovery.md"
+        evidence_locator = null
+        evidence_digest  = null
+      }
+    }
+    protected_inputs = {
+      project_id                         = null
+      cache_bucket_name                  = null
+      health_bucket_name                 = null
+      operation_bucket_name              = null
+      external_audit_bucket_name         = null
+      signer_secret_resource             = null
+      iam_qualification_evidence_locator = null
+      write_activation_evidence_locator  = null
+      publisher_wif_principal_sets       = []
+      gateway_wif_principal_sets         = []
+    }
+    gateway = {
+      hostname        = "nix-cache.mindclade.com"
+      scheme          = "https"
+      allowed_methods = ["GET", "HEAD"]
+      authentication  = "google-oidc-bearer-or-netrc"
+      implementation  = "external-managed-https-gateway"
+    }
+    quotas = {
+      publisher_writes_per_minute = 600
+      gateway_reads_per_minute    = 6000
+      maximum_cache_bytes         = 1099511627776
+    }
+    legacy_v1_compatibility_enabled = false
+  }
+}
 variable "config" {
   type = object({
     project_id    = optional(string)

@@ -39,3 +39,7 @@ output "region_authority" {
   }
 }
 output "resources" { value = module.stack }
+output "nix_cache_contract" {
+  description = "Non-secret cache endpoint, epoch, IAM/activation evidence, signer, audit, gateway, and quota handoff."
+  value       = module.stack.nix_cache
+}
