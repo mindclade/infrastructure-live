@@ -173,17 +173,24 @@ signature, and uploads only the signed export and bound receipt together.
 
 ## Local verification
 
-The repository-local `flake.nix` and `flake.lock` are the sole system-toolchain
-authority for supported `aarch64-darwin` and `x86_64-linux` hosts. The flake
-exposes the reviewed toolchain package, identical default/CI shell closures,
-formatter, and toolchain/source checks while preserving Go modules, OpenTofu
-provider locks, and Bazel as their native dependency authorities:
+The repository-local `flake.nix` and `flake.lock`, constrained by the
+checked-in generated estate policy, are the system-toolchain authority for
+supported `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux` hosts. The
+flake exposes the reviewed toolchain package, identical default/CI shell
+closures, formatter, and toolchain/source checks while preserving Go modules,
+OpenTofu provider locks, and Bazel as their native dependency authorities:
 
 ```sh
 nix build --no-accept-flake-config --no-update-lock-file .#toolchain
 nix flake check --no-accept-flake-config --no-update-lock-file
 nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just ci
 ```
+
+The four files under `generated/` are immutable local copies of the
+`mindclade/.github` policy projection pinned to implementation revision
+`b4d28faa5fde98087f60262110a43f25f6da9eb8`; evaluation never imports mutable
+remote policy. Source, Nix, and Bazel checks verify their exact byte digests,
+authority, internal lock digest, supported systems, and projected Bazel rc.
 
 `MODULE.bazel.lock` is reviewed source and normal Bazel commands fail instead
 of updating it. Remote Bazel execution and remote caching are intentionally

@@ -291,6 +291,10 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "justfile",
             "biome.json",
             "pyproject.toml",
+            "generated/bazelrc.common",
+            "generated/nix-bazel-policy.lock.json",
+            "generated/nix-bazel-policy.nix",
+            "generated/toolchain-manifest.defaults.json",
             ".github/CODEOWNERS",
             ".github/actionlint.yaml",
             ".github/dependabot.yml",
@@ -344,6 +348,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             *{f"policy/{name}.rego" for name in policies},
             *{f"policy/tests/{name}_test.rego" for name in policies},
             "tests/contract/test_environment_plan.py",
+            "tests/contract/test_generated_policy.py",
             *{
                 f"tests/plan/test_{name}_plan.py"
                 for name in ("development", "staging", "production")
