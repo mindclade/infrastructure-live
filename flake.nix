@@ -250,6 +250,7 @@
               markdownlint-cli2
               nixfmt
               opa
+              osv-scanner
               openssl
               pre-commit
 
@@ -268,6 +269,7 @@
               unzip
               yamllint
               yq-go
+              zizmor
             ]
             ++ lib.optionals stdenv.hostPlatform.isDarwin [ darwin.libresolv ];
           toolchain = pkgs.buildEnv {
@@ -341,6 +343,8 @@
                 test "$(ruff --version)" = "ruff 0.16.4"
                 test "$(shfmt --version)" = "3.13.1"
                 test "$(actionlint -version | head -n1)" = "1.7.12"
+                test "$(zizmor --version)" = "zizmor 1.29.0"
+                test "$(osv-scanner --version | awk '/^osv-scanner version:/ {print $3}')" = "2.5.0"
                 test "$(conftest --version | head -n1)" = "Conftest: 0.69.0"
                 test "$(go version | awk '{print $3}')" = "go1.26.7"
                 test "$(just --version)" = "just 1.58.0"

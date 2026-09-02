@@ -206,7 +206,7 @@ def signed_export(
 
 
 class EnvironmentPlanContractTest(unittest.TestCase):
-    def test_bazel_dependabot_stages_nested_go_module(self):
+    def test_bazel_renovate_stages_nested_go_module(self):
         module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
         for required in (
             'go_mod_from_file = "//tooling:go.mod"',
@@ -297,8 +297,8 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "generated/toolchain-manifest.defaults.json",
             ".github/CODEOWNERS",
             ".github/actionlint.yaml",
-            ".github/dependabot.yml",
             ".github/pull_request_template.md",
+            ".github/renovate.json",
             *{
                 f".github/workflows/{name}.yml"
                 for name in (

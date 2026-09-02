@@ -6,9 +6,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ENVIRONMENTS = ("development", "staging", "production", "restricted")
+# The stack set is authored once, under opentofu/stacks. Deriving it here means a
+# new stack or environment is caught by name below rather than by a file count.
+STACKS = tuple(
+    sorted(path.name for path in (ROOT / "opentofu/stacks").iterdir() if path.is_dir())
+)
+EXPECTED_LIVE_ROOTS = frozenset(
+    f"{environment}/{stack}" for environment in ENVIRONMENTS for stack in STACKS
+)
 
 
 class CrossEnvironmentDenialTest(unittest.TestCase):
+    def live_roots(self):
+        """Every environment/stack root exists, and no root exists that should not."""
+        roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
+        self.assertEqual(
+            {f"{root.parts[-2]}/{root.name}" for root in roots},
+            set(EXPECTED_LIVE_ROOTS),
+            "live roots must be exactly the environment x stack product",
+        )
+        return roots
+
     def test_each_root_has_partial_backend_and_matching_identity(self):
         for variables in sorted((ROOT / "opentofu/live").glob("*/*/environment.auto.tfvars.json")):
             environment = variables.parts[-3]
@@ -27,8 +45,7 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
                     self.assertNotIn(f"live/{other}/", source, f"{root} depends on {other}")
 
     def test_each_root_passes_its_immutable_environment_to_the_stack(self):
-        roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
-        self.assertEqual(len(roots), 28)
+        roots = self.live_roots()
         for root in roots:
             source = (root / "main.tf").read_text(encoding="utf-8")
             self.assertEqual(
@@ -36,8 +53,7 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
             )
 
     def test_targeted_module_activation_is_bound_directly_to_catalog_authority(self):
-        roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
-        self.assertEqual(len(roots), 28)
+        roots = self.live_roots()
         for root in roots:
             source = (root / "main.tf").read_text(encoding="utf-8")
             self.assertIn("var.enabled && local.environment_catalog.enabled", source, str(root))
@@ -45,8 +61,7 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
                 self.assertIn("&& local.region_profile.enabled", source, str(root))
 
     def test_each_root_preconditions_activation_on_the_exact_catalog_entry(self):
-        roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
-        self.assertEqual(len(roots), 28)
+        roots = self.live_roots()
         for root in roots:
             source = (root / "outputs.tf").read_text(encoding="utf-8")
             self.assertIn("var.enabled == one([", source, str(root))
@@ -140,8 +155,7 @@ class CrossEnvironmentDenialTest(unittest.TestCase):
         self.assertIn("resource-reference qualification digest", security)
 
     def test_every_root_declares_an_exact_iam_principal_approval_list(self):
-        roots = sorted(path for path in (ROOT / "opentofu/live").glob("*/*") if path.is_dir())
-        self.assertEqual(len(roots), 28)
+        roots = self.live_roots()
         for root in roots:
             source = (root / "main.tf").read_text(encoding="utf-8")
             contract = json.loads(
