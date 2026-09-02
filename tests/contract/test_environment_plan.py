@@ -255,6 +255,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "buildkite-agents",
             "argocd-management",
             "nix-cache",
+            "bazel-cache",
         )
         policies = (
             "organization_constraints",
@@ -377,6 +378,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                     "database-failover-and-restore",
                     "artifact-storage-recovery",
                     "nix-cache-recovery",
+                    "bazel-cache-recovery",
                     "regional-recovery",
                 )
             },
@@ -393,18 +395,29 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         source_symlinks = []
         for directory, children, files in os.walk(ROOT, followlinks=False):
             relative_directory = Path(directory).relative_to(ROOT)
+            # Bazel creates bazel-bin, bazel-out, bazel-testlogs and
+            # bazel-<workspace> as symlinks at the repository root only. Pruning
+            # every directory named bazel-* at any depth would also hide real
+            # source, such as opentofu/modules/gcp/bazel-cache, from this check.
+            def is_root_bazel_symlink(name: str) -> bool:
+                return (
+                    relative_directory == Path()
+                    and name.startswith("bazel-")
+                    and (Path(directory) / name).is_symlink()
+                )
+
             for child in children:
                 child_path = Path(directory) / child
                 if (
                     child_path.is_symlink()
                     and child not in ignored_directories
-                    and not child.startswith("bazel-")
+                    and not is_root_bazel_symlink(child)
                 ):
                     source_symlinks.append((relative_directory / child).as_posix())
             children[:] = [
                 child
                 for child in children
-                if child not in ignored_directories and not child.startswith("bazel-")
+                if child not in ignored_directories and not is_root_bazel_symlink(child)
             ]
             for name in files:
                 path = Path(directory) / name

@@ -9,7 +9,7 @@
 *.auto.tfvars
 !environment.auto.tfvars.json
 crash.log
-bazel-*
+/bazel-*
 /result
 /result-*
 tooling/infractl
