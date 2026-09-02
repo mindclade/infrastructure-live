@@ -379,6 +379,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                     "artifact-storage-recovery",
                     "nix-cache-recovery",
                     "bazel-cache-recovery",
+                    "cache-activation",
                     "regional-recovery",
                 )
             },
