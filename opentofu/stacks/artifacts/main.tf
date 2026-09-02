@@ -48,6 +48,17 @@ module "buckets" {
   writers = var.config.bucket_writers
 }
 
+module "bazel_cache" {
+  source = "../../modules/gcp/bazel-cache"
+
+  enabled          = var.enabled && var.bazel_cache.enabled
+  environment      = var.environment
+  location         = var.environment == "development" ? "us-central1" : coalesce(var.primary_location, "us-central1")
+  boundary         = var.bazel_cache.boundary
+  protected_inputs = var.bazel_cache.protected_inputs
+  quotas           = var.bazel_cache.quotas
+}
+
 module "nix_cache" {
   source = "../../modules/gcp/nix-cache"
 

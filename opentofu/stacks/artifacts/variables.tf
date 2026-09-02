@@ -326,3 +326,91 @@ variable "config" {
     error_message = "The inventory schedule must use valid bounded dates with start before end."
   }
 }
+
+variable "bazel_cache" {
+  description = "Fail-closed Bazel HTTP cache boundary. Defaults to the disabled state; enabling is an explicit, separately reviewed change."
+  type = object({
+    enabled = bool
+    boundary = object({
+      schema_version             = string
+      qualification              = string
+      cache_mode                 = string
+      cache_used                 = bool
+      cache_outputs_are_evidence = bool
+      endpoint                   = optional(string)
+      namespace = object({
+        schema_version   = string
+        classification   = string
+        namespace_epoch  = string
+        trust_class      = string
+        system           = string
+        toolchain_digest = optional(string)
+        build_mode       = string
+      })
+      cacheable_targets        = list(string)
+      iam_qualification_digest = optional(string)
+      write_activation_digest  = optional(string)
+      cacheless_canary = object({
+        required         = bool
+        status           = string
+        evidence_locator = optional(string)
+        evidence_digest  = optional(string)
+      })
+      poison_recovery = object({
+        required = bool
+        status   = string
+        runbook  = string
+      })
+    })
+    protected_inputs = object({
+      project_id                         = optional(string)
+      cache_bucket_name                  = optional(string)
+      operation_bucket_name              = optional(string)
+      external_audit_bucket_name         = optional(string)
+      iam_qualification_evidence_locator = optional(string)
+      write_activation_evidence_locator  = optional(string)
+      writer_wif_principal_sets          = optional(set(string), [])
+      reader_wif_principal_sets          = optional(set(string), [])
+    })
+    quotas = object({
+      cache_retention_days     = number
+      operation_retention_days = number
+      max_object_bytes         = number
+    })
+  })
+
+  default = {
+    enabled = false
+    boundary = {
+      schema_version             = "cache-boundary.v2"
+      qualification              = "DISABLED"
+      cache_mode                 = "disabled"
+      cache_used                 = false
+      cache_outputs_are_evidence = false
+      namespace = {
+        schema_version  = "cache-namespace.v2"
+        classification  = "internal"
+        namespace_epoch = "e1"
+        trust_class     = "protected"
+        system          = "x86_64-linux"
+        build_mode      = "hermetic"
+      }
+      cacheable_targets = []
+      cacheless_canary = {
+        required = true
+        status   = "REQUIRED_NOT_RUN"
+      }
+      poison_recovery = {
+        required = true
+        status   = "REQUIRED_NOT_EXERCISED"
+        runbook  = "runbooks/bazel-cache-recovery.md"
+      }
+    }
+    protected_inputs = {}
+    quotas = {
+      cache_retention_days     = 30
+      operation_retention_days = 400
+      max_object_bytes         = 1073741824
+    }
+  }
+}

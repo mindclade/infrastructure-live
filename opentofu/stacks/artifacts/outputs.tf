@@ -51,3 +51,13 @@ output "ci_evidence_archive" {
     error_message = "Retention lock is intentionally unreachable; a catalog receipt cannot authorize an irreversible provider mutation."
   }
 }
+
+output "bazel_cache" {
+  description = "Fail-closed cache-boundary.v2 and non-secret infrastructure handoff for the Bazel HTTP cache."
+  value = {
+    cache_boundary          = module.bazel_cache.cache_boundary
+    infrastructure_contract = module.bazel_cache.infrastructure_contract
+    bucket_ids              = module.bazel_cache.bucket_ids
+    kms_key_ids             = module.bazel_cache.kms_key_ids
+  }
+}

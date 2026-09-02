@@ -595,6 +595,51 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("${{ runner.temp }}/infrastructure-completion/", upload)
         self.assertIn("compression-level: 0", upload)
 
+    def test_bazel_cache_is_disabled_by_default_and_cannot_leak(self):
+        """The Bazel cache ships disabled, authenticated, and write-separated.
+
+        These are the properties that let a cache be an accelerator rather than a
+        trust boundary: it is off unless deliberately enabled, it is never
+        anonymously readable, a writer cannot overwrite an existing entry, and
+        nothing it serves may be treated as evidence.
+        """
+        module = (ROOT / "opentofu/modules/gcp/bazel-cache/main.tf").read_text(encoding="utf-8")
+        variables = (ROOT / "opentofu/modules/gcp/bazel-cache/variables.tf").read_text(
+            encoding="utf-8"
+        )
+        outputs = (ROOT / "opentofu/modules/gcp/bazel-cache/outputs.tf").read_text(encoding="utf-8")
+        stack = (ROOT / "opentofu/stacks/artifacts/variables.tf").read_text(encoding="utf-8")
+
+        # Off unless deliberately enabled, in both the module and the stack.
+        self.assertIn("variable \"enabled\"", variables)
+        self.assertRegex(variables, r'variable "enabled"[\s\S]*?default\s*=\s*false')
+        self.assertRegex(stack, r'variable "bazel_cache"[\s\S]*?qualification\s*=\s*"DISABLED"')
+        self.assertRegex(stack, r'variable "bazel_cache"[\s\S]*?enabled\s*=\s*false')
+
+        # Never anonymously readable: the source repositories are not public.
+        self.assertIn('public_access_prevention = "enforced"', module)
+        self.assertIn("uniform_bucket_level_access = true", module)
+
+        # A writer may add an entry and may not replace one.
+        self.assertIn("roles/storage.objectCreator", module)
+        self.assertIn("roles/storage.objectViewer", module)
+        self.assertNotIn("roles/storage.objectAdmin", module)
+        self.assertNotIn("roles/storage.admin", module)
+
+        # Write principals only exist once the cache is write-activated.
+        self.assertIn('var.boundary.qualification == "WRITE_ACTIVATED"', module)
+        self.assertIn("Write principals may exist only once the cache is write-activated", outputs)
+
+        # Cache output is never evidence, and destruction is never casual.
+        self.assertIn("!var.boundary.cache_outputs_are_evidence", variables)
+        self.assertIn("cache_outputs_are_evidence", outputs)
+        self.assertIn("force_destroy            = false", module)
+        self.assertIn("prevent_destroy = true", module)
+
+        # A qualified cache must name what it is allowed to cache.
+        self.assertIn("cacheable_targets", variables)
+        self.assertIn("explicit cacheable-target allowlist", variables)
+
     def test_drift_allocates_no_jobs_until_the_estate_is_connected(self):
         """Drift costs four job allocations connected, and zero otherwise.
 
