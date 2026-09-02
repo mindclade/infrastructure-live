@@ -1,5 +1,5 @@
 set dotenv-load := false
-set positional-arguments := true
+set positional-arguments
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 default:
@@ -67,25 +67,10 @@ test-python:
     @for directory in tests/*; do PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$directory" -p 'test_*.py'; done
 
 test-bazel:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "$(uname -s)" == Darwin ]]; then
-      unset NIX_BINTOOLS NIX_CC NIX_CFLAGS_COMPILE NIX_CFLAGS_LINK NIX_LDFLAGS
-      export CC=/usr/bin/clang
-      export CXX=/usr/bin/clang++
-    fi
-    output_root="$(mktemp -d)"
-    cleanup() { chmod -R u+w "$output_root" 2>/dev/null || true; rm -rf -- "$output_root"; }
-    trap cleanup EXIT
-    if command -v bazelisk >/dev/null 2>&1; then
-      bazel_bin="$(command -v bazelisk)"
-    else
-      bazel_bin="$(command -v bazel)"
-    fi
-    USE_BAZEL_VERSION=9.2.0 "$bazel_bin" --batch --output_user_root="$output_root/user" test //... --lockfile_mode=off --test_output=errors --symlink_prefix="$output_root/symlink-"
+    @bazel_args=(); if test -n "${MACOSX_DEPLOYMENT_TARGET:-}"; then bazel_args+=("--repo_env=MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}" "--action_env=MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}" "--copt=-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" "--linkopt=-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"); fi; bazel test --config=ci "${bazel_args[@]}" //...
 
 flake-check:
-    nix flake check --no-build --no-update-lock-file
+    nix flake check --no-accept-flake-config --no-build --no-update-lock-file
 
 check: format-check lint validate-catalog validate-policy validate-tofu test flake-check
 

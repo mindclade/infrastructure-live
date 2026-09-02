@@ -180,10 +180,15 @@ formatter, and toolchain/source checks while preserving Go modules, OpenTofu
 provider locks, and Bazel as their native dependency authorities:
 
 ```sh
-nix build --no-update-lock-file .#toolchain
-nix flake check --no-update-lock-file
-nix develop --no-update-lock-file .#ci --command just ci
+nix build --no-accept-flake-config --no-update-lock-file .#toolchain
+nix flake check --no-accept-flake-config --no-update-lock-file
+nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just ci
 ```
+
+`MODULE.bazel.lock` is reviewed source and normal Bazel commands fail instead
+of updating it. Remote Bazel execution and remote caching are intentionally
+disabled; either requires workers with the exact reviewed Nix store paths or
+an immutable, digest-pinned image built from this toolchain closure.
 
 The root developer-quality interface is `just format`, `just format-check`,
 `just lint`, and `just check`. Formatting is limited to handwritten source and

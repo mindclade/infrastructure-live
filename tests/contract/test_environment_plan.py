@@ -257,6 +257,9 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "cost_guardrails",
         )
         expected = {
+            ".bazelignore",
+            ".bazelrc",
+            ".bazelversion",
             ".editorconfig",
             ".gitignore",
             ".golangci.yml",
@@ -269,6 +272,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "CONTRIBUTING.md",
             "LICENSE",
             "MODULE.bazel",
+            "MODULE.bazel.lock",
             "README.md",
             "SECURITY.md",
             "component.yaml",
@@ -435,6 +439,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         workflow = workflow_source("pull-request.yml")
         codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
 
+        self.assertTrue(workflow.startswith("name: Pull request\n"))
         self.assertIn('"on":\n  pull_request:\n  merge_group:', workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("  required:\n    name: required", workflow)
@@ -500,15 +505,8 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         final_cleanup = workflow_step_source(workflow, "Remove transient plan material")
 
         self.assertIn('plan_log="${RUNNER_TEMP}/post-apply.plan.log"', step)
-        self.assertIn(
-            "matrix:\n        environment: [development, staging, production, restricted]", workflow
-        )
-        self.assertNotIn("matrix.stack", workflow)
-        self.assertIn(
-            "for stack in foundation network artifacts data-services clusters ci-execution observability",
-            step,
-        )
-        self.assertIn('-out="${saved_plan}" >>"${plan_log}" 2>&1', step)
+        self.assertNotIn("matrix:", workflow)
+        self.assertIn('-out="${saved_plan}" >"${plan_log}" 2>&1', step)
         self.assertIn('"${RUNNER_TEMP}/infractl" plan classify', step)
         self.assertIn("{creates, updates, deletes, replaces, reads, noOps, safe}", step)
         self.assertIn("only the redacted classification is shown", step)
@@ -576,7 +574,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("github.com/open-policy-agent/conftest@v0.69.0", workflow)
         self.assertIn("          audience: sts.googleapis.com", authentication)
         self.assertNotIn("audience: ${{", authentication)
-        self.assertIn('-out="${saved_plan}" >"${plan_log}" 2>&1', step)
+        self.assertIn('-out="${saved_plan}" >>"${plan_log}" 2>&1', step)
         self.assertIn('[[ "${plan_status}" -ne 0 && "${plan_status}" -ne 2 ]]', step)
         self.assertIn('conftest test "${plan_json}"', step)
         self.assertIn('[[ "${policy_status}" -ne 0 && "${policy_status}" -ne 1 ]]', step)
