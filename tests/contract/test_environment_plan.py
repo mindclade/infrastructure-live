@@ -254,6 +254,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "observability-backend",
             "buildkite-agents",
             "argocd-management",
+            "nix-cache",
         )
         policies = (
             "organization_constraints",
@@ -290,6 +291,10 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             "justfile",
             "biome.json",
             "pyproject.toml",
+            "generated/bazelrc.common",
+            "generated/nix-bazel-policy.lock.json",
+            "generated/nix-bazel-policy.nix",
+            "generated/toolchain-manifest.defaults.json",
             ".github/CODEOWNERS",
             ".github/actionlint.yaml",
             ".github/dependabot.yml",
@@ -343,6 +348,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
             *{f"policy/{name}.rego" for name in policies},
             *{f"policy/tests/{name}_test.rego" for name in policies},
             "tests/contract/test_environment_plan.py",
+            "tests/contract/test_generated_policy.py",
             *{
                 f"tests/plan/test_{name}_plan.py"
                 for name in ("development", "staging", "production")
@@ -370,6 +376,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                     "cluster-control-plane-failure",
                     "database-failover-and-restore",
                     "artifact-storage-recovery",
+                    "nix-cache-recovery",
                     "regional-recovery",
                 )
             },
@@ -403,6 +410,8 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 path = Path(directory) / name
                 relative = path.relative_to(ROOT).as_posix()
                 if name == ".DS_Store" or name.endswith((".pyc", ".pyo")):
+                    continue
+                if relative == ".git":
                     continue
                 if relative_directory == Path() and name.startswith("bazel-") and path.is_symlink():
                     continue
@@ -844,13 +853,16 @@ class EnvironmentPlanContractTest(unittest.TestCase):
                 "  - name: development\n    enabled: true",
                 1,
             )
+            source = source.replace(
+                "    activationEnabled: false", "    activationEnabled: true", 1
+            )
             environments.write_text(source, encoding="utf-8")
 
             regions = candidate / "catalog/regions.yaml"
             source = regions.read_text(encoding="utf-8")
             source = source.replace(
-                "  - name: central-us\n    enabled: false\n    primaryLocation: null",
-                "  - name: central-us\n    enabled: true\n    primaryLocation: us-central1",
+                "  - name: central-us\n    enabled: false\n    sourceReady: true",
+                "  - name: central-us\n    enabled: true\n    sourceReady: true",
                 1,
             )
             regions.write_text(source, encoding="utf-8")
@@ -905,6 +917,61 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertEqual(
             seen, {(environment, stack) for environment in ENVIRONMENTS for stack in STACKS}
         )
+
+    def test_development_platform_is_source_ready_in_authority_order_only(self):
+        catalog = run_infractl("catalog", "validate", "--root", str(ROOT))
+        self.assertEqual(catalog.returncode, 0, catalog.stderr + catalog.stdout)
+        environments = (ROOT / "catalog/environments.yaml").read_text(encoding="utf-8")
+        regions = (ROOT / "catalog/regions.yaml").read_text(encoding="utf-8")
+        for contract in (
+            "sourceReady: true",
+            "activationEnabled: false",
+            "authorityOrder: [foundation, network, artifacts, clusters, observability, ci-execution]",
+            "sourceReadyCapabilities: [foundation, network, artifact-registry, gcs, cloud-kms, regional-private-gke, observability, ci, argocd-inputs, nix-cache, estate-ci-edge]",
+            "dataServicesEnabled: false",
+        ):
+            self.assertIn(contract, environments)
+        self.assertIn("primaryLocation: us-central1", regions)
+        self.assertEqual(environments.count("sourceReady: true"), 1)
+        self.assertEqual(regions.count("sourceReady: true"), 1)
+
+    def test_estate_ci_and_argocd_protected_inputs_are_disconnected(self):
+        network = json.loads(
+            (ROOT / "opentofu/live/development/network/environment.auto.tfvars.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        edge = network["estate_ci_edge"]
+        self.assertIs(edge["connected"], False)
+        self.assertEqual(edge["hostname"], "estate-ci.mindclade.com")
+        self.assertEqual(edge["gateway_class"], "gke-l7-global-external-managed")
+        self.assertIsNone(edge["certificate_map_id"])
+        self.assertEqual(edge["certificate_ids"], [])
+        self.assertIsNone(edge["cloud_armor_policy_id"])
+        self.assertIsNone(edge["iap_oauth_client_secret_resource"])
+        self.assertEqual(edge["delegated_dns_records"], [])
+
+        clusters = json.loads(
+            (ROOT / "opentofu/live/development/clusters/environment.auto.tfvars.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        argocd = clusters["argocd_inputs"]
+        self.assertIs(argocd["connected"], False)
+        self.assertIsNone(argocd["membership_id"])
+        self.assertEqual(argocd["secret_references"], [])
+        self.assertIsNone(argocd["qualification_digest"])
+
+    def test_flake_exports_aarch64_linux_generated_policy_copy(self):
+        flake = (ROOT / "flake.nix").read_text(encoding="utf-8")
+        for binding in (
+            '"aarch64-linux"',
+            'mode = "generated-copy";',
+            'canonical_repository = "mindclade/infrastructure-live";',
+            'source_path = "policy/encryption_and_retention.rego";',
+            "cache-boundary.v2.rego",
+        ):
+            self.assertIn(binding, flake)
 
     def test_export_contract_requires_nonempty_immutable_resources(self):
         schema = json.loads(

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -275,7 +276,8 @@ func validateActivationBindings(root string, documents map[string]any) error {
 			if _, referenceErr := exactStringSetKey(rawBinding["approved_resource_references"]); referenceErr != nil {
 				problems = append(problems, fmt.Sprintf("%s approved_resource_references: %v", relativePath, referenceErr))
 			}
-			if catalogEnabled {
+			sourceReady, _ := environments[environmentName]["sourceReady"].(bool)
+			if sourceReady && containsString(environments[environmentName]["authorityOrder"], stack) {
 				regions, regionErr := namedCatalog(documents, "catalog/regions.yaml", "regions")
 				if regionErr != nil {
 					problems = append(problems, regionErr.Error())
@@ -455,6 +457,30 @@ func validateReferences(documents map[string]any) error {
 			if _, exists := accelerators[acceleratorName]; !exists {
 				problems = append(problems, fmt.Sprintf("environment %s references unknown acceleratorProfile %s", environmentName, acceleratorName))
 			}
+		}
+
+		sourceReady := boolField(environment, "sourceReady")
+		activationEnabled := boolField(environment, "activationEnabled")
+		dataServicesEnabled := boolField(environment, "dataServicesEnabled")
+		authorityOrder := stringSlice(environment["authorityOrder"])
+		expectedDevelopmentOrder := []string{"foundation", "network", "artifacts", "clusters", "observability", "ci-execution"}
+		sourceReadyCapabilities := stringSlice(environment["sourceReadyCapabilities"])
+		expectedDevelopmentCapabilities := []string{"foundation", "network", "artifact-registry", "gcs", "cloud-kms", "regional-private-gke", "observability", "ci", "argocd-inputs", "nix-cache", "estate-ci-edge"}
+		if activationEnabled != boolField(environment, "enabled") {
+			problems = append(problems, fmt.Sprintf("environment %s activationEnabled must equal enabled", environmentName))
+		}
+		if dataServicesEnabled {
+			problems = append(problems, fmt.Sprintf("environment %s data services must remain disabled", environmentName))
+		}
+		if environmentName == "development" {
+			if !sourceReady || !reflect.DeepEqual(authorityOrder, expectedDevelopmentOrder) || !reflect.DeepEqual(sourceReadyCapabilities, expectedDevelopmentCapabilities) {
+				problems = append(problems, "development must be source-ready in exact foundation/network/artifacts/clusters/observability/ci-execution authority order")
+			}
+			if !regionExists || !boolField(region, "sourceReady") || stringField(region, "primaryLocation") != "us-central1" {
+				problems = append(problems, "development source readiness requires the disabled central-us profile pinned to us-central1")
+			}
+		} else if sourceReady || len(authorityOrder) != 0 || len(sourceReadyCapabilities) != 0 {
+			problems = append(problems, fmt.Sprintf("environment %s must remain source-disabled with no authority order", environmentName))
 		}
 
 		enabled, _ := environment["enabled"].(bool)

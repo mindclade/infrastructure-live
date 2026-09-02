@@ -266,3 +266,145 @@ mutates(actions) if {
 	some action in actions
 	action in {"create", "update", "delete"}
 }
+
+valid_disabled_cache_boundary(boundary) if {
+	boundary.schema_version == "cache-boundary.v2"
+	boundary.qualification == "DISABLED"
+	boundary.source_revision == null
+	boundary.cache_mode == "disabled"
+	boundary.cache_used == false
+	boundary.cache_outputs_are_evidence == false
+	boundary.endpoint == null
+	boundary.namespace.schema_version == "cache-namespace.v2"
+	boundary.namespace.classification == "internal"
+	boundary.namespace.namespace_epoch == "disabled-v2"
+	boundary.namespace.trust_class == "untrusted"
+	boundary.namespace.system == "aarch64-linux"
+	boundary.namespace.toolchain_digest == null
+	boundary.namespace.build_mode == "cacheless"
+	boundary.iam_qualification_digest == null
+	boundary.write_activation_digest == null
+	boundary.signer_public_key_digest == null
+	boundary.audit_sink_digest == null
+	boundary.cacheless_canary.required == true
+	boundary.cacheless_canary.status == "NOT_RUN"
+	boundary.cacheless_canary.evidence_locator == null
+	boundary.cacheless_canary.evidence_digest == null
+	boundary.poison_recovery.required == true
+	boundary.poison_recovery.status == "NOT_RUN"
+	boundary.poison_recovery.runbook == "runbooks/nix-cache-recovery.md"
+	boundary.poison_recovery.evidence_locator == null
+	boundary.poison_recovery.evidence_digest == null
+}
+
+valid_qualified_cache_health(boundary) if {
+	boundary.cacheless_canary.required == true
+	boundary.cacheless_canary.status == "PASSED"
+	immutable_cache_evidence(boundary.cacheless_canary.evidence_locator)
+	cache_digest(boundary.cacheless_canary.evidence_digest)
+	boundary.poison_recovery.required == true
+	boundary.poison_recovery.status == "PASSED"
+	boundary.poison_recovery.runbook == "runbooks/nix-cache-recovery.md"
+	immutable_cache_evidence(boundary.poison_recovery.evidence_locator)
+	cache_digest(boundary.poison_recovery.evidence_digest)
+}
+
+valid_read_cache_boundary(boundary) if {
+	boundary.schema_version == "cache-boundary.v2"
+	boundary.qualification == "IAM_QUALIFIED"
+	regex.match("^[0-9a-f]{40}$", boundary.source_revision)
+	boundary.cache_mode == "read"
+	boundary.cache_used == true
+	boundary.cache_outputs_are_evidence == false
+	boundary.endpoint == "https://nix-cache.mindclade.com"
+	boundary.namespace.schema_version == "cache-namespace.v2"
+	boundary.namespace.classification == "internal"
+	regex.match("^epoch-[1-9][0-9]*$", boundary.namespace.namespace_epoch)
+	boundary.namespace.trust_class == "verified"
+	boundary.namespace.system == "aarch64-linux"
+	cache_digest(boundary.namespace.toolchain_digest)
+	boundary.namespace.build_mode == "substitute-read"
+	cache_digest(boundary.iam_qualification_digest)
+	boundary.write_activation_digest == null
+	cache_digest(boundary.signer_public_key_digest)
+	cache_digest(boundary.audit_sink_digest)
+	valid_qualified_cache_health(boundary)
+}
+
+valid_write_cache_boundary(boundary) if {
+	boundary.schema_version == "cache-boundary.v2"
+	boundary.qualification == "WRITE_ACTIVATED"
+	regex.match("^[0-9a-f]{40}$", boundary.source_revision)
+	boundary.cache_mode == "write"
+	boundary.cache_used == true
+	boundary.cache_outputs_are_evidence == false
+	boundary.endpoint == "https://nix-cache.mindclade.com"
+	boundary.namespace.schema_version == "cache-namespace.v2"
+	boundary.namespace.classification == "internal"
+	regex.match("^epoch-[1-9][0-9]*$", boundary.namespace.namespace_epoch)
+	boundary.namespace.trust_class == "protected"
+	boundary.namespace.system == "aarch64-linux"
+	cache_digest(boundary.namespace.toolchain_digest)
+	boundary.namespace.build_mode == "substitute-write"
+	cache_digest(boundary.iam_qualification_digest)
+	cache_digest(boundary.write_activation_digest)
+	cache_digest(boundary.signer_public_key_digest)
+	cache_digest(boundary.audit_sink_digest)
+	valid_qualified_cache_health(boundary)
+}
+
+valid_cache_boundary(boundary) if valid_disabled_cache_boundary(boundary)
+valid_cache_boundary(boundary) if valid_read_cache_boundary(boundary)
+valid_cache_boundary(boundary) if valid_write_cache_boundary(boundary)
+
+cache_digest(value) if {
+	is_string(value)
+	regex.match("^sha256:[0-9a-f]{64}$", value)
+}
+
+immutable_cache_evidence(value) if {
+	is_string(value)
+	regex.match("^gs://[^/[:space:]]+/[^#[:space:]]+#[1-9][0-9]*$", value)
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	not valid_cache_boundary(input.boundary)
+	message := "nix-cache: cache-boundary.v2 must retain an exact disabled, IAM-qualified read, or protected write-activated evidence contract"
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	input.legacy_v1_compatibility_enabled != false
+	message := "nix-cache: cache-boundary.v1 compatibility is prohibited"
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	input.gateway != {
+		"hostname": "nix-cache.mindclade.com",
+		"scheme": "https",
+		"allowed_methods": ["GET", "HEAD"],
+		"authentication": "google-oidc-bearer-or-netrc",
+		"implementation": "external-managed-https-gateway",
+	}
+	message := "nix-cache: gateway must be authenticated HTTPS and accept only GET/HEAD"
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	input.iam.publisher_roles != ["roles/storage.objectCreator"]
+	message := "nix-cache: publisher must remain create-only"
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	input.iam.gateway_roles != ["roles/storage.objectViewer"]
+	message := "nix-cache: gateway must remain read-only"
+}
+
+deny contains message if {
+	input.kind == "NixCacheContract"
+	input.iam.audit_sink_writer_bound_by_cache_owner != false
+	message := "nix-cache: external audit sink writer binding must remain outside cache-writer authority"
+}

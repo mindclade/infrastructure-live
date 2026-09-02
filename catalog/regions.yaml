@@ -3,13 +3,15 @@ kind: RegionCatalog
 regions:
   - name: central-us
     enabled: false
-    primaryLocation: null
+    sourceReady: true
+    primaryLocation: us-central1
     recoveryLocation: null
     residency: us
     regionalControlPlanes: true
     privateGoogleAccessRequired: true
   - name: central-us-with-east-recovery
     enabled: false
+    sourceReady: false
     primaryLocation: null
     recoveryLocation: null
     residency: us
@@ -17,6 +19,7 @@ regions:
     privateGoogleAccessRequired: true
   - name: central-us-restricted
     enabled: false
+    sourceReady: false
     primaryLocation: null
     recoveryLocation: null
     residency: us

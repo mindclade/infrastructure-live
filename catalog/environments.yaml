@@ -3,6 +3,11 @@ kind: EnvironmentCatalog
 environments:
   - name: development
     enabled: false
+    sourceReady: true
+    activationEnabled: false
+    authorityOrder: [foundation, network, artifacts, clusters, observability, ci-execution]
+    sourceReadyCapabilities: [foundation, network, artifact-registry, gcs, cloud-kms, regional-private-gke, observability, ci, argocd-inputs, nix-cache, estate-ci-edge]
+    dataServicesEnabled: false
     productionLike: false
     regionProfile: central-us
     projectClass: workload-nonproduction
@@ -13,6 +18,11 @@ environments:
     gitopsPromotionMode: automatic-after-evidence
   - name: staging
     enabled: false
+    sourceReady: false
+    activationEnabled: false
+    authorityOrder: []
+    sourceReadyCapabilities: []
+    dataServicesEnabled: false
     productionLike: true
     regionProfile: central-us-with-east-recovery
     projectClass: workload-preproduction
@@ -23,6 +33,11 @@ environments:
     gitopsPromotionMode: manual
   - name: production
     enabled: false
+    sourceReady: false
+    activationEnabled: false
+    authorityOrder: []
+    sourceReadyCapabilities: []
+    dataServicesEnabled: false
     productionLike: true
     regionProfile: central-us-with-east-recovery
     projectClass: workload-production
@@ -33,6 +48,11 @@ environments:
     gitopsPromotionMode: manual
   - name: restricted
     enabled: false
+    sourceReady: false
+    activationEnabled: false
+    authorityOrder: []
+    sourceReadyCapabilities: []
+    dataServicesEnabled: false
     productionLike: true
     regionProfile: central-us-restricted
     projectClass: workload-restricted

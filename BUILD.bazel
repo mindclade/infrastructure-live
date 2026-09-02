@@ -26,6 +26,7 @@ filegroup(
     ] + glob([
         ".github/**",
         "catalog/**",
+        "generated/**",
         "opentofu/**",
         "policy/**",
         "runbooks/**",
@@ -35,6 +36,13 @@ filegroup(
         "*.yaml",
         "*.bazel",
     ]),
+)
+
+py_test(
+    name = "generated_policy_contract_test",
+    srcs = ["tests/contract/test_generated_policy.py"],
+    data = [":repository_source"],
+    main = "tests/contract/test_generated_policy.py",
 )
 
 py_test(
@@ -126,6 +134,7 @@ test_suite(
         ":database_restore_test",
         ":development_plan_test",
         ":environment_plan_contract_test",
+        ":generated_policy_contract_test",
         ":partial_apply_reconciliation_test",
         ":production_plan_test",
         ":staging_plan_test",

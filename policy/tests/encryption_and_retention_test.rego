@@ -2,6 +2,135 @@ package mindclade.infrastructure.encryption_and_retention
 
 import rego.v1
 
+disabled_cache_boundary := {
+	"schema_version": "cache-boundary.v2",
+	"qualification": "DISABLED",
+	"source_revision": null,
+	"cache_mode": "disabled",
+	"cache_used": false,
+	"cache_outputs_are_evidence": false,
+	"endpoint": null,
+	"namespace": {
+		"schema_version": "cache-namespace.v2",
+		"classification": "internal",
+		"namespace_epoch": "disabled-v2",
+		"trust_class": "untrusted",
+		"system": "aarch64-linux",
+		"toolchain_digest": null,
+		"build_mode": "cacheless",
+	},
+	"iam_qualification_digest": null,
+	"write_activation_digest": null,
+	"signer_public_key_digest": null,
+	"audit_sink_digest": null,
+	"cacheless_canary": {"required": true, "status": "NOT_RUN", "evidence_locator": null, "evidence_digest": null},
+	"poison_recovery": {"required": true, "status": "NOT_RUN", "runbook": "runbooks/nix-cache-recovery.md", "evidence_locator": null, "evidence_digest": null},
+}
+
+disabled_cache_contract := {
+	"kind": "NixCacheContract",
+	"boundary": disabled_cache_boundary,
+	"legacy_v1_compatibility_enabled": false,
+	"gateway": {
+		"hostname": "nix-cache.mindclade.com",
+		"scheme": "https",
+		"allowed_methods": ["GET", "HEAD"],
+		"authentication": "google-oidc-bearer-or-netrc",
+		"implementation": "external-managed-https-gateway",
+	},
+	"iam": {
+		"publisher_roles": ["roles/storage.objectCreator"],
+		"gateway_roles": ["roles/storage.objectViewer"],
+		"audit_sink_writer_bound_by_cache_owner": false,
+	},
+}
+
+qualified_cache_health := {
+	"cacheless_canary": {
+		"required": true,
+		"status": "PASSED",
+		"evidence_locator": "gs://mindclade-evidence/cache/canary.json#17",
+		"evidence_digest": sprintf("sha256:%064d", [1]),
+	},
+	"poison_recovery": {
+		"required": true,
+		"status": "PASSED",
+		"runbook": "runbooks/nix-cache-recovery.md",
+		"evidence_locator": "gs://mindclade-evidence/cache/recovery.json#19",
+		"evidence_digest": sprintf("sha256:%064d", [2]),
+	},
+}
+
+read_cache_boundary := object.union(disabled_cache_boundary, object.union(qualified_cache_health, {
+	"qualification": "IAM_QUALIFIED",
+	"source_revision": sprintf("%040d", [1]),
+	"cache_mode": "read",
+	"cache_used": true,
+	"endpoint": "https://nix-cache.mindclade.com",
+	"namespace": {
+		"namespace_epoch": "epoch-1",
+		"trust_class": "verified",
+		"toolchain_digest": sprintf("sha256:%064d", [3]),
+		"build_mode": "substitute-read",
+	},
+	"iam_qualification_digest": sprintf("sha256:%064d", [4]),
+	"signer_public_key_digest": sprintf("sha256:%064d", [5]),
+	"audit_sink_digest": sprintf("sha256:%064d", [6]),
+}))
+
+write_cache_boundary := object.union(read_cache_boundary, {
+	"qualification": "WRITE_ACTIVATED",
+	"cache_mode": "write",
+	"namespace": {"trust_class": "protected", "build_mode": "substitute-write"},
+	"write_activation_digest": sprintf("sha256:%064d", [7]),
+})
+
+test_accepts_disabled_cache_boundary_v2 if {
+	violations := deny with input as disabled_cache_contract
+	count(violations) == 0
+}
+
+test_accepts_iam_qualified_read_boundary if {
+	candidate := object.union(disabled_cache_contract, {"boundary": read_cache_boundary})
+	violations := deny with input as candidate
+	count(violations) == 0
+}
+
+test_accepts_protected_write_activated_boundary if {
+	candidate := object.union(disabled_cache_contract, {"boundary": write_cache_boundary})
+	violations := deny with input as candidate
+	count(violations) == 0
+}
+
+test_rejects_read_without_iam_qualification_digest if {
+	bad_boundary := object.union(read_cache_boundary, {"iam_qualification_digest": null})
+	candidate := object.union(disabled_cache_contract, {"boundary": bad_boundary})
+	violations := deny with input as candidate
+	count(violations) == 1
+}
+
+test_rejects_write_without_protected_trust if {
+	bad_boundary := object.union(write_cache_boundary, {"namespace": {"trust_class": "verified"}})
+	candidate := object.union(disabled_cache_contract, {"boundary": bad_boundary})
+	violations := deny with input as candidate
+	count(violations) == 1
+}
+
+test_rejects_cache_poison_recovery_bypass if {
+	bad_recovery := object.union(disabled_cache_boundary.poison_recovery, {"required": false})
+	bad_boundary := object.union(disabled_cache_boundary, {"poison_recovery": bad_recovery})
+	candidate := object.union(disabled_cache_contract, {"boundary": bad_boundary})
+	violations := deny with input as candidate
+	count(violations) == 1
+}
+
+test_rejects_cache_publisher_read_authority if {
+	bad_iam := object.union(disabled_cache_contract.iam, {"publisher_roles": ["roles/storage.objectAdmin"]})
+	candidate := object.union(disabled_cache_contract, {"iam": bad_iam})
+	violations := deny with input as candidate
+	count(violations) == 1
+}
+
 test_rejects_publicly_exposable_bucket if {
 	violations := deny with input as {
 		"resource_changes": [{

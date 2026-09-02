@@ -10,6 +10,72 @@ variable "enabled" {
   type    = bool
   default = false
 }
+variable "nix_cache" {
+  description = "Protected cache-boundary.v2 activation inputs. Null identifiers are required while disabled."
+  type = object({
+    enabled = bool
+    boundary = object({
+      schema_version             = string
+      qualification              = string
+      source_revision            = optional(string)
+      cache_mode                 = string
+      cache_used                 = bool
+      cache_outputs_are_evidence = bool
+      endpoint                   = optional(string)
+      namespace = object({
+        schema_version   = string
+        classification   = string
+        namespace_epoch  = string
+        trust_class      = string
+        system           = string
+        toolchain_digest = optional(string)
+        build_mode       = string
+      })
+      iam_qualification_digest = optional(string)
+      write_activation_digest  = optional(string)
+      signer_public_key_digest = optional(string)
+      audit_sink_digest        = optional(string)
+      cacheless_canary = object({
+        required         = bool
+        status           = string
+        evidence_locator = optional(string)
+        evidence_digest  = optional(string)
+      })
+      poison_recovery = object({
+        required         = bool
+        status           = string
+        runbook          = string
+        evidence_locator = optional(string)
+        evidence_digest  = optional(string)
+      })
+    })
+    protected_inputs = object({
+      project_id                         = optional(string)
+      cache_bucket_name                  = optional(string)
+      health_bucket_name                 = optional(string)
+      operation_bucket_name              = optional(string)
+      external_audit_bucket_name         = optional(string)
+      signer_secret_resource             = optional(string)
+      iam_qualification_evidence_locator = optional(string)
+      write_activation_evidence_locator  = optional(string)
+      publisher_wif_principal_sets       = set(string)
+      gateway_wif_principal_sets         = set(string)
+    })
+    gateway = object({
+      hostname        = string
+      scheme          = string
+      allowed_methods = list(string)
+      authentication  = string
+      implementation  = string
+    })
+    quotas = object({
+      publisher_writes_per_minute = number
+      gateway_reads_per_minute    = number
+      maximum_cache_bytes         = number
+    })
+    legacy_v1_compatibility_enabled = bool
+  })
+}
 variable "approved_iam_principals" {
   description = "Environment-scoped externally qualified IAM principals used by policy validation."
   type        = set(string)
@@ -87,4 +153,5 @@ module "stack" {
   primary_location  = local.region_profile.primaryLocation
   recovery_location = local.region_profile.recoveryLocation
   config            = var.config
+  nix_cache         = var.nix_cache
 }
