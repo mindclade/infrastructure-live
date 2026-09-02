@@ -464,7 +464,7 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertNotIn("id-token: write", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertIn(
-            "mindclade/.github/.github/workflows/reusable-nix-validation.yml@f9b6ebcecd197157d9466eeacf8e2864e32c9a79",
+            "mindclade/.github/.github/workflows/reusable-nix-validation.yml@fc5af9efc19b47078fe446feee750d7f4973195b",
             workflow,
         )
         self.assertIn("VALIDATE_RESULT: ${{ needs.validate.result }}", workflow)

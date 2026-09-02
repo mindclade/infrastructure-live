@@ -23,6 +23,12 @@ jobs:
     name: connected-preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # Skip cleanly until the connected read-only bindings are provisioned. Without
+    # this guard the scheduled run fails every day on the assertions below, which
+    # burns Actions minutes and hides real drift failures behind a standing red.
+    if: >-
+      github.ref == 'refs/heads/main'
+      && vars.INFRASTRUCTURE_CONNECTED_READY == 'true'
     env:
       CONNECTED_READY: ${{ vars.INFRASTRUCTURE_CONNECTED_READY }}
     steps:
