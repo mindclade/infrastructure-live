@@ -72,7 +72,7 @@ does not require widening that assertion. Adding one to a context that sets
 2. Populate the endpoint in `mindclade/.bazelrc`. The two consumption modes are
    already declared and already carry their safety flags:
 
-   ```
+   ```text
    build:cache-read  --remote_cache=https://<endpoint>
    build:cache-write --remote_cache=https://<endpoint>
    ```
