@@ -19,29 +19,15 @@ env:
   TOFU_LINUX_AMD64_SHA256: 5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8
 
 jobs:
-  preflight:
-    name: connected-preflight
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    # Skip cleanly until the connected read-only bindings are provisioned. Without
-    # this guard the scheduled run fails every day on the assertions below, which
-    # burns Actions minutes and hides real drift failures behind a standing red.
+  classify:
+    name: ${{ matrix.environment }}
+    # Gate the matrix itself rather than a separate preflight job. An unconnected
+    # scheduled run now allocates no jobs at all, and a connected run allocates
+    # exactly one per environment; the assertions the preflight job used to make
+    # are re-made below, inside each job, before any cloud identity is used.
     if: >-
       github.ref == 'refs/heads/main'
       && vars.INFRASTRUCTURE_CONNECTED_READY == 'true'
-    env:
-      CONNECTED_READY: ${{ vars.INFRASTRUCTURE_CONNECTED_READY }}
-    steps:
-      - name: Require qualified read-only bindings
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "${GITHUB_REF}" = "refs/heads/main"
-          test "${CONNECTED_READY}" = "true"
-
-  classify:
-    name: ${{ matrix.environment }}
-    needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: trusted-build
@@ -53,11 +39,19 @@ jobs:
       matrix:
         environment: [development, staging, production, restricted]
     env:
+      CONNECTED_READY: ${{ vars.INFRASTRUCTURE_CONNECTED_READY }}
       STATE_BUCKET: ${{ vars.INFRASTRUCTURE_STATE_BUCKET }}
       STATE_PREFIX: ${{ vars.INFRASTRUCTURE_STATE_PREFIX }}
       WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER_INFRASTRUCTURE_PLAN }}
       WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT_INFRASTRUCTURE_PLAN }}
     steps:
+      - name: Require qualified read-only bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${CONNECTED_READY}" = "true"
+
       - name: Require environment-scoped read-only bindings
         shell: bash
         run: |

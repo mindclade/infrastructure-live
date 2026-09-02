@@ -582,6 +582,37 @@ class EnvironmentPlanContractTest(unittest.TestCase):
         self.assertIn("${{ runner.temp }}/infrastructure-completion/", upload)
         self.assertIn("compression-level: 0", upload)
 
+    def test_drift_allocates_no_jobs_until_the_estate_is_connected(self):
+        """Drift costs four job allocations connected, and zero otherwise.
+
+        A separate preflight job used to gate the matrix, which meant every
+        unconnected scheduled run still allocated a runner. The gate now sits on
+        the matrix job, and each environment job re-makes the preflight
+        assertions itself before any cloud identity is used.
+        """
+        workflow = workflow_source("drift-detection.yml")
+        jobs = re.findall(r"(?m)^  ([a-z_-]+):$", workflow.split("\njobs:\n", 1)[1])
+        self.assertEqual(["classify"], jobs, "drift must define exactly one matrix job")
+
+        guard = 'github.ref == \'refs/heads/main\'\n      && vars.INFRASTRUCTURE_CONNECTED_READY == \'true\''
+        self.assertIn(guard, workflow, "the matrix job itself must be gated")
+
+        # The assertions the retired preflight job made must still be made.
+        step = workflow_step_source(workflow, "Require qualified read-only bindings")
+        self.assertIn('test "${GITHUB_REF}" = "refs/heads/main"', step)
+        self.assertIn('test "${CONNECTED_READY}" = "true"', step)
+
+        # And they must run before the job touches a cloud identity.
+        self.assertLess(
+            workflow.index("Require qualified read-only bindings"),
+            workflow.index("Authenticate the read-only plan identity"),
+        )
+
+        self.assertEqual(
+            ["development", "staging", "production", "restricted"],
+            re.search(r"environment: \[([^\]]+)\]", workflow).group(1).replace(" ", "").split(","),
+        )
+
     def test_drift_evidence_records_policy_outcome_without_policy_contents(self):
         workflow = workflow_source("drift-detection.yml")
         step = workflow_step_source(workflow, "Create a read-only drift plan and redacted evidence")
